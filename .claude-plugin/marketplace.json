@@ -1,0 +1,19 @@
+{
+  "name": "test-guard",
+  "owner": {
+    "name": "kwangtaeko",
+    "url": "https://github.com/kwangtaeko"
+  },
+  "description": "test-guard: stop AI coding agents from weakening tests to make them pass.",
+  "plugins": [
+    {
+      "name": "test-guard",
+      "description": "Blocks Claude from deleting, skipping or weakening tests to make them pass, before the edit happens.",
+      "source": {
+        "source": "npm",
+        "package": "test-guard",
+        "version": "^0.1.0"
+      }
+    }
+  ]
+}

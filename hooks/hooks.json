@@ -1,0 +1,38 @@
+{
+  "description": "test-guard: judge edits and shell commands before they run, and the working tree before Claude stops.",
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Edit|Write|Bash|PowerShell",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node",
+            "args": [
+              "${CLAUDE_PLUGIN_ROOT}/dist/cli.js",
+              "hook",
+              "claude-code",
+              "pre-tool-use"
+            ]
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node",
+            "args": [
+              "${CLAUDE_PLUGIN_ROOT}/dist/cli.js",
+              "hook",
+              "claude-code",
+              "stop"
+            ]
+          }
+        ]
+      }
+    ]
+  }
+}

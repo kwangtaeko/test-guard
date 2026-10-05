@@ -1,0 +1,12 @@
+{
+  "name": "test-guard-demo",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "vitest run"
+  },
+  "devDependencies": {
+    "test-guard": "^0.1.0",
+    "vitest": "^4.1.11"
+  }
+}

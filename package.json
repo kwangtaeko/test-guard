@@ -1,14 +1,41 @@
 {
   "name": "test-guard",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "description": "Detect and block AI coding agents from deleting, skipping or weakening tests.",
+  "keywords": [
+    "testing",
+    "ai",
+    "agents",
+    "claude-code",
+    "codex",
+    "git-hooks",
+    "github-action",
+    "test-integrity",
+    "guard"
+  ],
+  "homepage": "https://github.com/kwangtaeko/test-guard#readme",
+  "bugs": {
+    "url": "https://github.com/kwangtaeko/test-guard/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/kwangtaeko/test-guard.git"
+  },
   "license": "MIT",
+  "author": "kwangtaeko",
   "type": "module",
   "bin": {
     "test-guard": "dist/cli.js"
   },
   "files": [
-    "dist"
+    "dist",
+    ".claude-plugin",
+    "hooks",
+    "skills",
+    "README.md",
+    "README.ko.md",
+    "CHANGELOG.md",
+    "LICENSE"
   ],
   "engines": {
     "node": ">=20"
@@ -24,13 +51,11 @@
     "@biomejs/biome": "^2.5.15",
     "@types/node": "^20.19.43",
     "@types/picomatch": "^4.0.3",
+    "commander": "^14.0.3",
+    "picocolors": "^1.1.1",
+    "picomatch": "^4.0.7",
     "tsup": "^8.5.1",
     "typescript": "^7.0.2",
     "vitest": "^4.1.11"
-  },
-  "dependencies": {
-    "commander": "^14.0.3",
-    "picocolors": "^1.1.1",
-    "picomatch": "^4.0.7"
   }
 }
