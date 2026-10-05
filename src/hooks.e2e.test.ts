@@ -14,14 +14,8 @@ const CLI = join(OUT_DIR, 'cli.js').replace(/\\/g, '/');
 
 beforeAll(async () => {
   rmSync(OUT_DIR, { recursive: true, force: true });
-  await build({
-    config: false,
-    entry: { cli: 'src/bin.ts' },
-    format: ['esm'],
-    target: 'node20',
-    outDir: OUT_DIR,
-    silent: true,
-  });
+  // The project's tsup.config.ts, so the bundle matches what ships.
+  await build({ outDir: OUT_DIR, silent: true });
 }, 60_000);
 
 let repo: Repo;
