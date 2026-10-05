@@ -1,0 +1,96 @@
+import { readFileSync } from 'node:fs';
+import { describe, expect, it } from 'vitest';
+import {
+  blockStop,
+  denyToolUse,
+  fileEdit,
+  type PreToolUseInput,
+  parseHookInput,
+  shellCommand,
+} from './claude-code.js';
+
+const pre = (tool_name: string, tool_input: object) =>
+  parseHookInput(
+    JSON.stringify({
+      hook_event_name: 'PreToolUse',
+      cwd: '/repo',
+      tool_name,
+      tool_input,
+    }),
+  ) as PreToolUseInput;
+
+describe('parseHookInput', () => {
+  it('parses PreToolUse and Stop', () => {
+    expect(pre('Bash', { command: 'ls' })).toEqual({
+      event: 'PreToolUse',
+      cwd: '/repo',
+      toolName: 'Bash',
+      toolInput: { command: 'ls' },
+    });
+    expect(
+      parseHookInput(
+        '{"hook_event_name":"Stop","cwd":"/r","stop_hook_active":true}',
+      ),
+    ).toEqual({ event: 'Stop', cwd: '/r', stopHookActive: true });
+  });
+
+  it.each([
+    'not json',
+    '{}',
+    '{"hook_event_name":"PreToolUse","cwd":"/r"}',
+    '{"hook_event_name":"Notification","cwd":"/r"}',
+  ])('rejects %s', (text) => {
+    expect(() => parseHookInput(text)).toThrow();
+  });
+});
+
+describe('tool inputs', () => {
+  it('reads Write and Edit', () => {
+    expect(fileEdit(pre('Write', { file_path: '/a', content: 'x' }))).toEqual({
+      kind: 'write',
+      filePath: '/a',
+      content: 'x',
+    });
+    expect(
+      fileEdit(
+        pre('Edit', { file_path: '/a', old_string: 'x', new_string: 'y' }),
+      ),
+    ).toEqual({
+      kind: 'edit',
+      filePath: '/a',
+      oldString: 'x',
+      newString: 'y',
+      replaceAll: false,
+    });
+    expect(fileEdit(pre('Read', { file_path: '/a' }))).toBeNull();
+  });
+
+  it('reads shell commands', () => {
+    expect(shellCommand(pre('PowerShell', { command: 'ls' }))).toBe('ls');
+    expect(shellCommand(pre('Write', { command: 'ls' }))).toBeNull();
+  });
+});
+
+describe('responses', () => {
+  it('match the documented shapes', () => {
+    expect(JSON.parse(denyToolUse('no'))).toEqual({
+      hookSpecificOutput: {
+        hookEventName: 'PreToolUse',
+        permissionDecision: 'deny',
+        permissionDecisionReason: 'no',
+      },
+    });
+    expect(JSON.parse(blockStop('why'))).toEqual({
+      decision: 'block',
+      reason: 'why',
+    });
+  });
+});
+
+it('does not import test-guard logic', () => {
+  const source = readFileSync(
+    new URL('./claude-code.ts', import.meta.url),
+    'utf8',
+  );
+  expect(source).not.toMatch(/^import /m);
+});

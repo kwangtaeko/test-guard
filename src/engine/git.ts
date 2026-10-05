@@ -150,3 +150,10 @@ export function listAfterFiles(
       : git(root, ['ls-files', '-z', '--cached'], env);
   return [...new Set(out.split('\0').filter(Boolean))];
 }
+
+// Tracked and untracked (not ignored) files in the working tree.
+export function listWorktreeFiles(root: string): string[] {
+  return git(root, ['ls-files', '-z', '-co', '--exclude-standard'])
+    .split('\0')
+    .filter(Boolean);
+}
