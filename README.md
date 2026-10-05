@@ -1,10 +1,19 @@
 # test-guard
 
+<p>
+  <a href="https://www.npmjs.com/package/test-guard"><img src="https://img.shields.io/npm/v/test-guard.svg" alt="npm"></a>
+  <a href="https://github.com/kwangtaeko/test-guard/actions/workflows/ci.yml"><img src="https://github.com/kwangtaeko/test-guard/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/npm/l/test-guard.svg" alt="MIT"></a>
+</p>
+
 **Stop AI coding agents from deleting, skipping or weakening tests to make them pass.**
 
-[한국어](README.ko.md)
+<img alt="Claude Code tries to add it.skip, test-guard blocks the edit, and Claude fixes the bug instead" src="https://raw.githubusercontent.com/kwangtaeko/test-guard/main/docs/assets/hero.gif" width="800" />
 
-<!-- Demo GIF: the agent tries to add `it.skip`, test-guard blocks it, the agent fixes the code instead. -->
+<sub>A real Claude Code session on the [demo project](examples/demo), played at 2× speed.
+Recorded with <a href="https://github.com/charmbracelet/vhs">VHS</a> from <a href="docs/tapes">these tapes</a>.</sub>
+
+[한국어](README.ko.md)
 
 Coding agents sometimes "fix" a failing test by deleting it, adding `.skip`,
 removing assertions or excluding it from the test run. The suite goes green and
@@ -18,14 +27,33 @@ the bug stays. test-guard catches this with the same rules in three places:
 
 No LLM, no network, no telemetry. Same input, same result.
 
-## Quick start
+## Installation
 
 ```sh
+# npm
 npm install --save-dev test-guard
-npx test-guard install --pre-commit            # git commit-msg hook
-npx test-guard install --agent claude-code     # or: --agent codex
-npx test-guard check                           # check the working tree now
+
+# pnpm
+pnpm add --save-dev test-guard
+
+# yarn
+yarn add --dev test-guard
 ```
+
+Requires Node.js 20 or later and git. The package is a single file with no
+runtime dependencies.
+
+## Set it up
+
+```sh
+npx test-guard install --agent claude-code     # or: --agent codex
+npx test-guard install --pre-commit            # git commit-msg hook
+```
+
+`install --agent` shows what it will add to the agent's settings and asks
+before writing (`--yes` skips the question).
+
+<img alt="test-guard install --agent claude-code shows a diff, asks, and writes .claude/settings.json; install --pre-commit adds the commit-msg hook" src="https://raw.githubusercontent.com/kwangtaeko/test-guard/main/docs/assets/install.gif" width="800" />
 
 Try it on the [demo project](examples/demo): one failing test, one bug.
 
@@ -61,6 +89,31 @@ jobs:
 Violations fail the job and are listed in the job summary. A human can approve
 intentional changes with the `test-guard:approved` label (`approve-label`
 input). **Only give label permissions to people, never to an agent's token.**
+
+## Usage
+
+### Check the working tree
+
+`test-guard check` compares your changes with HEAD and lists every weakened
+test. Use it after an agent session, or before you push.
+
+```sh
+npx test-guard check
+```
+
+<img alt="test-guard check reports a removed assertion (TG003), a weaker matcher (TG007) and an added it.skip (TG004)" src="https://raw.githubusercontent.com/kwangtaeko/test-guard/main/docs/assets/check.gif" width="800" />
+
+### Block weakening commits
+
+With the commit-msg hook installed, a commit that weakens tests fails. If the
+change is intentional, a human adds a `Test-Guard-Approved:` trailer with the
+reason, and the commit goes through.
+
+```sh
+git commit -m "test: skip flaky subtraction" -m "Test-Guard-Approved: tracked in #42"
+```
+
+<img alt="A commit adding it.skip is blocked; the same commit with a Test-Guard-Approved trailer goes through" src="https://raw.githubusercontent.com/kwangtaeko/test-guard/main/docs/assets/commit.gif" width="800" />
 
 ## Rules
 
