@@ -22,7 +22,7 @@
     "url": "git+https://github.com/kwangtaeko/test-guard.git"
   },
   "license": "MIT",
-  "author": "kwangtaeko",
+  "author": "tonygwangsk",
   "type": "module",
   "bin": {
     "test-guard": "dist/cli.js"
