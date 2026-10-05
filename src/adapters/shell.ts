@@ -111,17 +111,63 @@ function isReadOnly(tokens: string[]): boolean {
 }
 
 // TG006: obvious attempts to get around test-guard (ROADMAP §3.3).
+// git accepts any unambiguous prefix of a long option, such as `--no-veri`.
+const isNoVerify = (token: string) =>
+  token.length >= 6 && '--no-verify'.startsWith(token);
+
+// `git config [--get] core.hooksPath` only reads; anything else may write.
+function readsHooksPath(tokens: string[]): boolean {
+  if (verbOf(tokens) !== 'git') return false;
+  const { sub, rest } = gitParts(tokens);
+  const args = rest.filter(
+    (t) =>
+      ![
+        '--get',
+        '--get-all',
+        '--local',
+        '--global',
+        '--system',
+        '--worktree',
+      ].includes(t),
+  );
+  return (
+    sub === 'config' &&
+    args.length === 1 &&
+    args[0]?.toLowerCase() === 'core.hookspath'
+  );
+}
+
+// Files that keep test-guard running; writing them from the shell is blocked.
+const PROTECTED: [RegExp, string][] = [
+  [/\.git[\\/]+hooks/i, 'changes a git hook'],
+  [/(^|[\\/])\.test-guard\.json$/, 'changes the test-guard config'],
+  [
+    /(^|[\\/])\.claude[\\/]+settings[^\\/]*\.json$/i,
+    'changes Claude Code settings',
+  ],
+  [/(^|[\\/])\.codex[\\/]/i, 'changes Codex settings'],
+];
+
+// Text that only shows up when something tries to get around test-guard.
+// Mentions are fine in read-only commands such as `grep`.
+const BYPASS_TEXT: [RegExp, string][] = [
+  [/--no-verify/, '`--no-verify` skips test-guard’s git hook'],
+  [/hookspath/i, 'changing `core.hooksPath` skips test-guard’s git hook'],
+  [/disableAllHooks/i, '`disableAllHooks` turns off agent hooks'],
+  [
+    /test-guard-approved\s*:/i,
+    'adds a `Test-Guard-Approved` trailer (only humans approve)',
+  ],
+];
+
 export function findBypass(command: string): string[] {
   const segments = splitCommand(command);
   const found: string[] = [];
   for (const tokens of segments) {
     const verb = verbOf(tokens);
     if (verb === 'git') {
-      const { sub, rest, configs } = gitParts(tokens);
-      if (configs.some((c) => /^core\.hookspath=/i.test(c))) {
-        found.push('`git -c core.hooksPath=…` skips test-guard’s git hook');
-      }
-      if (rest.includes('--no-verify')) {
+      const { sub, rest } = gitParts(tokens);
+      if (rest.some(isNoVerify)) {
         found.push(`\`git ${sub} --no-verify\` skips test-guard’s git hook`);
       } else if (
         sub === 'commit' &&
@@ -129,33 +175,50 @@ export function findBypass(command: string): string[] {
       ) {
         found.push('`git commit -n` skips test-guard’s git hook');
       }
-      const key = rest.findIndex((t) => t.toLowerCase() === 'core.hookspath');
-      if (
-        sub === 'config' &&
-        key !== -1 &&
-        (rest.length > key + 1 || rest.includes('--unset'))
-      ) {
-        found.push('changing `core.hooksPath` skips test-guard’s git hook');
-      }
     }
-    const mentions = (re: RegExp) => tokens.some((t) => re.test(t));
     const writes =
       tokens.some((t) => t.startsWith('>')) ||
       (verb !== 'git' && !READ_ONLY.has(verb));
-    if (mentions(/\.git[\\/]+hooks/i) && writes) {
-      found.push('changes a git hook');
-    }
-    if (mentions(/(^|[\\/])\.test-guard\.json$/) && writes) {
-      found.push('changes the test-guard config');
+    if (!writes) continue;
+    for (const [path, message] of PROTECTED) {
+      if (tokens.some((t) => path.test(t))) found.push(message);
     }
   }
-  if (/test-guard-approved\s*:/i.test(command) && !segments.every(isReadOnly)) {
-    found.push('adds a `Test-Guard-Approved` trailer (only humans approve)');
+  // Checked on the raw command so variables (`F=--no-verify`) and environment
+  // overrides (`GIT_CONFIG_KEY_0=core.hooksPath`) count too.
+  const readOnly = segments.every((s) => isReadOnly(s) || readsHooksPath(s));
+  if (!readOnly) {
+    for (const [text, message] of BYPASS_TEXT) {
+      if (text.test(command)) found.push(message);
+    }
   }
   if (/(?:\$env:)?\bTEST_GUARD_\w*\s*=(?!=)/i.test(command)) {
     found.push('sets a `TEST_GUARD_*` variable');
   }
   return [...new Set(found)];
+}
+
+// Commit message files (`git commit -F msg.txt`), resolved against `cwd`, so
+// the hook can look for a trailer written there beforehand.
+export function commitMessageFiles(command: string, cwd: string): string[] {
+  const files: string[] = [];
+  for (const tokens of splitCommand(command)) {
+    if (verbOf(tokens) !== 'git') continue;
+    const { sub, rest } = gitParts(tokens);
+    if (sub !== 'commit') continue;
+    rest.forEach((token, i) => {
+      const value =
+        token === '-F' || token === '--file'
+          ? rest[i + 1]
+          : token.startsWith('--file=')
+            ? token.slice('--file='.length)
+            : /^-F./.test(token)
+              ? token.slice(2)
+              : undefined;
+      if (value && value !== '-') files.push(resolve(cwd, value));
+    });
+  }
+  return files;
 }
 
 export interface FileOp {

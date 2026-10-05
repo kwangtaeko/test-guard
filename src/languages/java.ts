@@ -8,5 +8,6 @@ export const java: LanguageSpec = {
   tests: /@(?:[\w$]+\.)*(?:Test|ParameterizedTest|RepeatedTest)\b/g,
   // A leading `.` is allowed: `Assertions.assertEquals(`.
   assertions: /(?<![\w$])(?:assert\w*|fail)\s*\(/g,
-  skips: /@(?:[\w$]+\.)*(?:Disabled\w*|Ignore)\b|(?<![\w$])assume\w*\s*\(/g,
+  skips:
+    /@(?:[\w$]+\.)*(?:Disabled\w*|Enabled\w*|Ignore)\b|(?<![\w$])assume\w*\s*\(/g,
 };

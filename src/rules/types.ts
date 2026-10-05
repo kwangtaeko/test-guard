@@ -12,6 +12,7 @@ export interface RuleInput {
   afterLines: string[];
   hunks: Hunk[]; // line diff of beforeLines → afterLines
   runnerConfig: RunnerConfig | null; // TG005 target (config `exclude` applied)
+  addedToExistingDir: boolean; // a new runner config next to existing files
   guardFile: 'config' | 'hook' | null; // TG006 target
 }
 

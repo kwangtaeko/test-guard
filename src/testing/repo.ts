@@ -21,6 +21,8 @@ writeFileSync(emptyConfig, '');
 Object.assign(process.env, {
   GIT_CONFIG_NOSYSTEM: '1',
   GIT_CONFIG_GLOBAL: emptyConfig,
+  // git also reads $XDG_CONFIG_HOME/git/ignore (default ~/.config/git/ignore).
+  XDG_CONFIG_HOME: dirname(emptyConfig),
   GIT_AUTHOR_NAME: 'test',
   GIT_AUTHOR_EMAIL: 'test@example.com',
   GIT_COMMITTER_NAME: 'test',

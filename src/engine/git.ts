@@ -157,3 +157,10 @@ export function listWorktreeFiles(root: string): string[] {
     .split('\0')
     .filter(Boolean);
 }
+
+// Files committed in `rev`.
+export function listTreeFiles(root: string, rev: string): string[] {
+  return git(root, ['ls-tree', '-r', '-z', '--name-only', rev])
+    .split('\0')
+    .filter(Boolean);
+}

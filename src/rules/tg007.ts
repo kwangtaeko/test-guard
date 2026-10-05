@@ -129,6 +129,7 @@ export const tg007: Rule = ({ before, after, hunks }) => {
   const spec = SPECS[after.stats.language];
   const path = after.stats.path;
   const findings: RuleFinding[] = [];
+  const pairedPerGroup = { value: 0, throw: 0 };
 
   for (const hunk of hunks) {
     const reported = new Set<number>();
@@ -146,6 +147,7 @@ export const tg007: Rule = ({ before, after, hunks }) => {
         const [hit] = weakAdded.splice(weak, 1);
         if (!hit) continue;
         reported.add(hit.line);
+        pairedPerGroup[strong.group]++;
         findings.push({
           ruleId: 'TG007',
           path,
@@ -164,6 +166,30 @@ export const tg007: Rule = ({ before, after, hunks }) => {
         path,
         line,
         message: `added meaningless assertion \`${match[0].trim()}\``,
+      });
+    }
+  }
+
+  // Across the whole file: a strong matcher removed in one place and a weak
+  // one added in another escapes the per-hunk pairing above.
+  if (before) {
+    const all = (lines: string[]) => lines.map((_, i) => i + 1);
+    const added = new Set(hunks.flatMap((hunk) => hunk.added));
+    for (const group of ['value', 'throw'] as const) {
+      const count = (matchers: Matcher[], lines: string[]) =>
+        hits(matchers, all(lines), lines).filter((h) => h.group === group);
+      const strongDrop =
+        count(spec.strong, before.lines).length -
+        count(spec.strong, after.lines).length;
+      const weakAfter = count(spec.weak, after.lines);
+      const weakRise = weakAfter.length - count(spec.weak, before.lines).length;
+      if (Math.min(strongDrop, weakRise) <= pairedPerGroup[group]) continue;
+      const where = weakAfter.find((h) => added.has(h.line));
+      findings.push({
+        ruleId: 'TG007',
+        path,
+        line: where?.line,
+        message: `weakened assertions: strong matchers −${strongDrop}, weak matchers +${weakRise}`,
       });
     }
   }

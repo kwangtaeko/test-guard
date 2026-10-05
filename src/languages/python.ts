@@ -8,5 +8,5 @@ export const python: LanguageSpec = {
   assertions:
     /(?<![\w.])assert(?=[\s(])|(?<![\w.])self\.assert\w*\s*\(|(?<![\w.])pytest\.raises\s*\(/g,
   skips:
-    /(?<![\w.])pytest\.mark\.(?:skip|skipif|xfail)\b|(?<![\w.])pytest\.(?:skip|xfail)\s*\(|(?<![\w.])unittest\.skip\w*|(?<![\w.])self\.skipTest\s*\(/g,
+    /(?<![\w.])pytest\.mark\.(?:skip|skipif|xfail)\b|(?<![\w.])pytest\.(?:skip|xfail)\s*\(|(?<![\w.])unittest\.skip\w*|(?<![\w.])self\.skipTest\s*\(|(?<![\w.])pytest\.importorskip\s*\(|\bSkipTest\b|\bexpectedFailure\b/g,
 };
