@@ -8,6 +8,7 @@ export class HookInputError extends Error {}
 export interface PreToolUseInput {
   event: 'PreToolUse';
   cwd: string;
+  sessionId?: string;
   toolName: string;
   toolInput: Record<string, unknown>;
 }
@@ -15,6 +16,7 @@ export interface PreToolUseInput {
 export interface StopInput {
   event: 'Stop';
   cwd: string;
+  sessionId?: string;
   stopHookActive: boolean; // already continuing because of a Stop hook
 }
 
@@ -30,6 +32,10 @@ export function parseHookInput(text: string): HookInput {
   if (!isObject(raw) || typeof raw.cwd !== 'string') {
     throw new HookInputError('stdin JSON has no "cwd"');
   }
+  const sessionId =
+    typeof raw.session_id === 'string' && raw.session_id !== ''
+      ? raw.session_id
+      : undefined;
   if (raw.hook_event_name === 'PreToolUse') {
     if (typeof raw.tool_name !== 'string' || !isObject(raw.tool_input)) {
       throw new HookInputError('PreToolUse input has no tool_name/tool_input');
@@ -37,6 +43,7 @@ export function parseHookInput(text: string): HookInput {
     return {
       event: 'PreToolUse',
       cwd: raw.cwd,
+      sessionId,
       toolName: raw.tool_name,
       toolInput: raw.tool_input,
     };
@@ -45,6 +52,7 @@ export function parseHookInput(text: string): HookInput {
     return {
       event: 'Stop',
       cwd: raw.cwd,
+      sessionId,
       stopHookActive: raw.stop_hook_active === true,
     };
   }

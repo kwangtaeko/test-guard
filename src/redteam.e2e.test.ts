@@ -58,6 +58,17 @@ const write = (path: string, content: string) =>
   pre('Write', { file_path: join(repo.dir, path), content });
 const bash = (command: string) => pre('Bash', { command });
 
+function stop(session_id?: string): string {
+  return runClaudeCodeHook(
+    JSON.stringify({
+      hook_event_name: 'Stop',
+      cwd: repo.dir,
+      session_id,
+      stop_hook_active: false,
+    }),
+  );
+}
+
 describe('skips that 0.1.0 missed', () => {
   it.each([
     [
@@ -215,5 +226,75 @@ describe('turning test-guard off', () => {
   ])('allows %s', (command) => {
     setup();
     expect(bash(command)).toBe('');
+  });
+});
+
+describe('commits made during a session (round 2)', () => {
+  const sessionInput = (id: string) =>
+    JSON.stringify({
+      hook_event_name: 'PreToolUse',
+      cwd: repo.dir,
+      session_id: id,
+      tool_name: 'Bash',
+      tool_input: { command: 'git status' },
+    });
+  const begin = () => {
+    expect(runClaudeCodeHook(sessionInput('s1'))).toBe('');
+    return 's1';
+  };
+  const skipped = JS_TEST.replace("it('subtracts'", "it.skip('subtracts'");
+
+  it('blocks Stop after a shell edit committed in the same command', () => {
+    setup();
+    const id = begin();
+    repo.write('src/math.test.js', skipped);
+    repo.git('commit', '-qam', 'wip');
+    expect(stop(id)).toContain('TG004');
+    expect(stop()).toBe(''); // without a session: compared with HEAD only
+  });
+
+  it('blocks Stop after a commit made with commit-tree (no hooks run)', () => {
+    setup();
+    const id = begin();
+    repo.write('src/math.test.js', skipped);
+    repo.git('add', '-A');
+    const tree = repo.git('write-tree').trim();
+    const commit = repo.git('commit-tree', tree, '-p', 'HEAD', '-m', 'w');
+    repo.git('update-ref', 'HEAD', commit.trim());
+    expect(stop(id)).toContain('TG004');
+  });
+
+  it('blocks Stop after a revert that removes tests (no commit-msg hook)', () => {
+    setup();
+    repo.write('src/extra.test.js', JS_TEST);
+    repo.commitAll('more tests');
+    const id = begin();
+    repo.git('revert', '--no-edit', 'HEAD');
+    expect(stop(id)).toContain('TG001');
+  });
+
+  it('blocks Stop after reset --soft turns committed tests into new files', () => {
+    setup();
+    repo.write('src/new.test.js', JS_TEST);
+    repo.commitAll('human tests');
+    const id = begin();
+    repo.git('reset', '--soft', 'HEAD~1');
+    repo.write('src/new.test.js', "it('adds', () => {});\n");
+    expect(stop(id)).toMatch(/TG00[23]/);
+  });
+
+  it('sees edits hidden with update-index --assume-unchanged', () => {
+    setup();
+    repo.git('update-index', '--assume-unchanged', 'src/math.test.js');
+    repo.write('src/math.test.js', skipped);
+    expect(ruleIds()).toEqual(['TG004']);
+  });
+
+  it('lets a session that only adds tests stop', () => {
+    setup();
+    const id = begin();
+    repo.write('src/extra.test.js', JS_TEST);
+    repo.commitAll('add tests');
+    expect(stop(id)).toBe('');
   });
 });

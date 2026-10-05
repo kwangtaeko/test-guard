@@ -6,7 +6,7 @@ import { join, resolve } from 'node:path';
 export class GitError extends Error {}
 
 export type CompareMode =
-  | { kind: 'worktree' }
+  | { kind: 'worktree'; from?: string } // `from` (a commit) instead of HEAD
   | { kind: 'staged' }
   | { kind: 'base'; ref: string };
 
@@ -49,12 +49,20 @@ export function resolveBase(root: string, mode: CompareMode): string | null {
       throw new GitError(`cannot find merge-base of ${mode.ref} and HEAD`);
     }
   }
+  return resolveCommit(
+    root,
+    mode.kind === 'worktree' && mode.from ? mode.from : 'HEAD',
+  );
+}
+
+// Full hash of a commit, or null when `rev` names none (e.g. no commits yet).
+export function resolveCommit(root: string, rev: string): string | null {
   try {
     return git(root, [
       'rev-parse',
       '--verify',
       '--quiet',
-      'HEAD^{commit}',
+      `${rev}^{commit}`,
     ]).trim();
   } catch {
     return null;
@@ -80,6 +88,27 @@ export function createWorktreeIndex(root: string): {
   try {
     if (existsSync(indexPath)) copyFileSync(indexPath, tempIndex);
     const env = { ...process.env, GIT_INDEX_FILE: tempIndex };
+    // `update-index --assume-unchanged` / `--skip-worktree` would hide edits
+    // from `git add`. Sparse checkout leaves skip-worktree files off disk;
+    // those stay as they are.
+    const hidden = git(root, ['ls-files', '-v', '-z'], env)
+      .split('\0')
+      .filter((entry) => /^(?:[a-z]|S) /.test(entry))
+      .map((entry) => entry.slice(2))
+      .filter((path) => existsSync(join(root, path)));
+    if (hidden.length > 0) {
+      git(
+        root,
+        [
+          'update-index',
+          '--no-assume-unchanged',
+          '--no-skip-worktree',
+          '--',
+          ...hidden,
+        ],
+        env,
+      );
+    }
     git(root, ['add', '--all', '--', '.'], env);
     return {
       env,

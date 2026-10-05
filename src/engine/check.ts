@@ -94,7 +94,12 @@ export function runCheck(options: CheckOptions): CheckResult {
 
     return {
       mode,
-      from: mode.kind === 'base' ? mode.ref : 'HEAD',
+      from:
+        mode.kind === 'base'
+          ? mode.ref
+          : mode.kind === 'worktree'
+            ? (mode.from ?? 'HEAD')
+            : 'HEAD',
       findings: findings.sort(
         (a, b) =>
           a.path.localeCompare(b.path) ||

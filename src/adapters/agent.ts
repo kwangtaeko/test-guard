@@ -35,6 +35,7 @@ import { toLf } from '../languages/index.js';
 import { normalizePath } from '../paths.js';
 import type { RuleId } from '../rules/index.js';
 import type { PatchedFile } from './apply-patch.js';
+import { recordSessionStart, sessionStart } from './session.js';
 import {
   commitMessageFiles,
   type FileOp,
@@ -62,12 +63,25 @@ export function runHook(
   contexts.clear();
   try {
     const input = parseHookInput(stdin);
+    rememberSessionStart(input);
     if (input.event === 'Stop') return onStop(input);
     const violations = checkToolUse(input);
     return violations.length > 0 ? denyToolUse(blockedReason(violations)) : '';
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     return notifyUser(`test-guard hook error: ${message}`);
+  }
+}
+
+// Best effort: without a recorded start, Stop compares with HEAD as before.
+function rememberSessionStart(input: PreToolUseInput | StopInput): void {
+  if (!input.sessionId) return;
+  const root = findRepoRoot(resolve(input.cwd));
+  if (!root) return;
+  try {
+    recordSessionStart(root, input.sessionId);
+  } catch {
+    // e.g. a read-only .git directory
   }
 }
 
@@ -230,9 +244,12 @@ function movedPath(
 function onStop(input: StopInput): string {
   const root = findRepoRoot(resolve(input.cwd));
   if (!root) return '';
+  // Compared with where the session started, so the agent's own commits
+  // count too.
+  const from = input.sessionId ? sessionStart(root, input.sessionId) : null;
   const result = runCheck({
     cwd: root,
-    mode: { kind: 'worktree' },
+    mode: from ? { kind: 'worktree', from } : { kind: 'worktree' },
     countFiles: false,
   });
   const errors = result.findings.filter((f) => f.severity === 'error');
@@ -241,12 +258,14 @@ function onStop(input: StopInput): string {
     // Blocked once already: don't hold the session hostage, e.g. over test
     // changes a human made on purpose.
     return notifyUser(
-      `test-guard: ${errors.length} test weakening finding(s) remain in the working tree. Run \`test-guard check\` to review.`,
+      `test-guard: ${errors.length} test weakening finding(s) remain${from ? ` since ${from.slice(0, 7)}` : ' in the working tree'}. Run \`test-guard check\` to review.`,
     );
   }
   return blockStop(
     [
-      '[test-guard] Tests were weakened in the working tree (compared with HEAD):',
+      from
+        ? `[test-guard] Tests were weakened in this session (working tree and commits since ${from.slice(0, 7)}):`
+        : '[test-guard] Tests were weakened in the working tree (compared with HEAD):',
       ...errors.map((f) => `- ${describe(f)}`),
       'Revert these test changes and fix the implementation instead.',
       'If you believe a test itself is wrong, stop and explain why to the user.',
