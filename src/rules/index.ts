@@ -1,0 +1,22 @@
+import { tg001 } from './tg001.js';
+import { tg002 } from './tg002.js';
+import { tg003 } from './tg003.js';
+import { tg004 } from './tg004.js';
+import { tg007 } from './tg007.js';
+import type { Rule } from './types.js';
+
+export const RULE_IDS = ['TG001', 'TG002', 'TG003', 'TG004', 'TG007'] as const;
+
+export type RuleId = (typeof RULE_IDS)[number];
+
+export const RULES: Record<RuleId, Rule> = {
+  TG001: tg001,
+  TG002: tg002,
+  TG003: tg003,
+  TG004: tg004,
+  TG007: tg007,
+};
+
+export function isRuleId(id: string): id is RuleId {
+  return (RULE_IDS as readonly string[]).includes(id);
+}

@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import { createTestFileMatcher } from '../paths.js';
-import { analyzeFile } from './index.js';
+import { analyzeFile, analyzeSource } from './index.js';
 
 const FIXTURES = fileURLToPath(
   new URL('../../fixtures/languages/', import.meta.url),
@@ -28,6 +28,33 @@ describe('analyzeFile', () => {
       expect(readFileSync(FIXTURES + path, 'utf8')).toContain('\r\n');
     },
   );
+});
+
+describe('analyzeSource', () => {
+  it('locates skips by line, CRLF included', () => {
+    const source = readFileSync(`${FIXTURES}js/basic.test.ts`, 'utf8');
+    expect(analyzeSource('basic.test.ts', source, 'js').skips).toEqual([
+      { line: 18, text: 'it.skip' },
+      { line: 22, text: 'it.todo' },
+      { line: 25, text: 'xdescribe' },
+      { line: 26, text: 'xit' },
+      { line: 29, text: 'fit' },
+      { line: 34, text: 'describe.only' },
+      { line: 35, text: 'test.only' },
+    ]);
+    expect(
+      analyzeSource('t.test.js', "a();\r\n// x\r\nit.skip('b');", 'js').skips,
+    ).toEqual([{ line: 3, text: 'it.skip' }]);
+  });
+
+  it('keeps stripped lines aligned with the source', () => {
+    const { lines } = analyzeSource(
+      'test_a.py',
+      '"""doc\nassert 1\n"""\nassert x  # c\n',
+      'python',
+    );
+    expect(lines).toEqual(['"""   ', '        ', '"""', 'assert x     ', '']);
+  });
 });
 
 describe('js fixtures', () => {
