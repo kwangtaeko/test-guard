@@ -4,8 +4,8 @@
   "version": "0.1.0",
   "description": "Blocks Claude from deleting, skipping or weakening tests to make them pass, before the edit happens.",
   "author": {
-    "name": "kwangtaeko",
-    "url": "https://github.com/kwangtaeko"
+    "name": "tonygwangsk",
+    "url": "https://www.npmjs.com/~tonygwangsk"
   },
   "homepage": "https://github.com/kwangtaeko/test-guard",
   "repository": "https://github.com/kwangtaeko/test-guard",
