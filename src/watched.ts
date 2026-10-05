@@ -8,6 +8,7 @@ export type RunnerConfig =
   | 'package.json'
   | 'jest'
   | 'vitest'
+  | 'vite'
   | 'mocha'
   | 'pytest'
   | 'conftest'
@@ -18,7 +19,10 @@ export function runnerConfigKind(path: string): RunnerConfig | null {
   const name = normalizePath(path).split('/').pop() ?? '';
   if (name === 'package.json') return 'package.json';
   if (/^jest\.config\.(?:[cm]?[jt]s|json)$/.test(name)) return 'jest';
-  if (/^vitest\.config\.[cm]?[jt]s$/.test(name)) return 'vitest';
+  if (/^vitest\.(?:config|workspace)\.[cm]?[jt]s$/.test(name)) {
+    return 'vitest';
+  }
+  if (/^vite\.config\.[cm]?[jt]s$/.test(name)) return 'vite';
   if (/^\.mocharc(?:\.\w+)?$/.test(name)) return 'mocha';
   if (['pytest.ini', 'pyproject.toml', 'setup.cfg', 'tox.ini'].includes(name)) {
     return 'pytest';

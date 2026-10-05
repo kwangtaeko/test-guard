@@ -26,6 +26,11 @@
 | 사용자 알림 | 공통 JSON 필드 `systemMessage` | hooks.md "JSON output" |
 | exit 0 + 일반 텍스트 | PreToolUse/Stop에서는 디버그 로그로만 감 | hooks.md "Exit code 0" |
 
+## 플러그인 끄기 차단 (레드팀 2차, TG006)
+- 출처: `claude plugin --help`, `claude plugin disable --help`, `claude plugin uninstall --help` (Claude Code 2.1.289, 2026-10-05 확인)
+- `claude plugin|plugins disable [options] [plugin]` (`-a, --all`로 전부), `claude plugin uninstall|remove [options] <plugin>`
+- 설정의 `enabledPlugins`에서 `"<plugin>@<marketplace>": false`로도 끌 수 있으므로, 에이전트가 이 값을 쓰는 명령·파일 편집도 막습니다.
+
 ## 사용하지 않는 것과 이유
 - **PostToolUse**: 차단할 수 없고("PostToolUse … No … the tool already ran"), 셸 실행마다 전체 검사를 돌리면 느립니다. 셸로 바꾼 내용은 Stop에서 잡습니다.
 - **NotebookEdit**: 테스트 파일이 노트북인 경우는 범위 밖입니다.

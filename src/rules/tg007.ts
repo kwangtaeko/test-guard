@@ -24,7 +24,7 @@ const SPECS: Record<Language, Spec> = {
   js: {
     strong: [
       {
-        re: /\.(?:toBe|toEqual|toStrictEqual|toHaveLength)\s*\(/,
+        re: /(?<!\.not)\.(?:toBe|toEqual|toStrictEqual|toHaveLength)\s*\(/,
         group: 'value',
       },
       { re: /\.toThrow\s*\(\s*[^\s)]/, group: 'throw', label: 'toThrow(X)' },
@@ -32,6 +32,11 @@ const SPECS: Record<Language, Spec> = {
     weak: [
       {
         re: /\.(?:toBeDefined|toBeTruthy|not\.toBeNull|not\.toBeUndefined)\s*\(/,
+        group: 'value',
+      },
+      // An exact value replaced by "anything but" or a range.
+      {
+        re: /\.(?:not\.(?:toBe|toEqual|toStrictEqual|toHaveLength)|toBeGreaterThan(?:OrEqual)?|toBeLessThan(?:OrEqual)?)\s*\(/,
         group: 'value',
       },
       { re: /\.toThrow\s*\(\s*\)/, group: 'throw', label: 'toThrow()' },
@@ -57,11 +62,25 @@ const SPECS: Record<Language, Spec> = {
       },
     ],
     weak: [
-      { re: /(?<![\w.])self\.assert(?:True|IsNotNone)\s*\(/, group: 'value' },
       {
-        re: /(?<![\w.])assert(?=[\s(])(?!.*(?:==|!=|<|>|\bin\b))/,
+        re: /(?<![\w.])self\.assert(?:True|IsNotNone|NotEqual|Greater|GreaterEqual|Less|LessEqual)\s*\(/,
+        group: 'value',
+      },
+      {
+        // A line ending in `(` continues (Black's multi-line `assert (`).
+        re: /(?<![\w.])assert(?=[\s(])(?!.*(?:==|!=|<|>|\bin\b))(?!.*\(\s*$)/,
         group: 'value',
         label: 'assert x',
+      },
+      {
+        re: /(?<![\w.])assert(?=[\s(])(?!.*==).*!=/,
+        group: 'value',
+        label: 'assert x != y',
+      },
+      {
+        re: /(?<![\w.])assert(?=[\s(])(?!.*[=!]=).*[<>]/,
+        group: 'value',
+        label: 'assert x < y',
       },
       {
         re: /(?<![\w.])pytest\.raises\s*\(\s*(?:Exception|BaseException)\b/,
@@ -84,7 +103,10 @@ const SPECS: Record<Language, Spec> = {
       },
     ],
     weak: [
-      { re: /(?<![\w$])(?:assertNotNull|assertTrue)\s*\(/, group: 'value' },
+      {
+        re: /(?<![\w$])(?:assertNotNull|assertTrue|assertNotEquals|assertNotSame)\s*\(/,
+        group: 'value',
+      },
       {
         re: /(?<![\w$])assertThrows\s*\(\s*(?:java\.lang\.)?(?:Exception|Throwable)\.class/,
         group: 'throw',

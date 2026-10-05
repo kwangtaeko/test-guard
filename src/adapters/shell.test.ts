@@ -110,6 +110,7 @@ describe('fileOps', () => {
           verb: 'git mv',
           sources: [at('a.test.js')],
           dest: at('old'),
+          destIsDir: true,
         },
       ],
     ],
@@ -130,5 +131,163 @@ describe('fileOps', () => {
 
   it('ignores other commands', () => {
     expect(fileOps('npm test && git status && ls -la', cwd)).toEqual([]);
+  });
+
+  it.each([
+    [
+      "find . -name '*.test.js' -delete",
+      [{ kind: 'delete', verb: 'find', sources: [at('**/*.test.js')] }],
+    ],
+    [
+      "find src -name '*.test.js' -exec rm {} \\;",
+      [{ kind: 'delete', verb: 'find', sources: [at('src/**/*.test.js')] }],
+    ],
+    [
+      "find . -name '*.test.js' | grep user | xargs rm -f",
+      [{ kind: 'delete', verb: 'rm', sources: [at('**/*.test.js')] }],
+    ],
+    [
+      "git ls-files '*.test.js' | xargs -0 rm",
+      [{ kind: 'delete', verb: 'rm', sources: [at('*.test.js')] }],
+    ],
+    [
+      'Get-ChildItem -Recurse -Filter *.test.js | Remove-Item',
+      [
+        {
+          kind: 'delete',
+          verb: 'remove-item',
+          sources: [at('**/*.test.js')],
+        },
+      ],
+    ],
+    [
+      'Remove-Item -Path:src\\a.test.js',
+      [{ kind: 'delete', verb: 'remove-item', sources: [at('src/a.test.js')] }],
+    ],
+    [
+      'Move-Item -Destination old -Path a.test.js',
+      [
+        {
+          kind: 'move',
+          verb: 'move-item',
+          sources: [at('a.test.js')],
+          dest: at('old'),
+        },
+      ],
+    ],
+    [
+      'bash -c "cd src && rm a.test.js"',
+      [{ kind: 'delete', verb: 'rm', sources: [at('src/a.test.js')] }],
+    ],
+    [
+      'rm a.test.js > log.txt',
+      [{ kind: 'delete', verb: 'rm', sources: [at('a.test.js')] }],
+    ],
+  ])('%s', (command, expected) => {
+    expect(fileOps(command, cwd)).toEqual(expected);
+  });
+
+  it('knows a folder made earlier or written with a slash', () => {
+    expect(
+      fileOps('mkdir -p tests/unit && mv tests/test_a.py tests/unit', cwd),
+    ).toMatchObject([
+      { kind: 'move', dest: at('tests/unit'), destIsDir: true },
+    ]);
+  });
+
+  it('does not guess what an unknown list holds', () => {
+    expect(fileOps('cat list.txt | xargs rm', cwd)).toEqual([]);
+  });
+});
+
+describe('findBypass round 2', () => {
+  it.each([
+    'echo {}>.test-guard.json',
+    'echo x>>.git/hooks/pre-commit',
+    'cd .git && echo x > hooks/pre-commit',
+    'cd .claude; echo {} > settings.local.json',
+    'cp evil.json .claude/settings.local.json',
+    'cp settings.local.json .claude/',
+    'Copy-Item -Path settings.local.json -Destination .claude',
+    'Set-Content -Path:.test-guard.json -Value "{}"',
+    'echo {} > .test-guard.json::$DATA',
+    `node -e "require('fs').writeFileSync('.test-guard.json', '{}')"`,
+    `python -c "open('.git/hooks/commit-msg', 'w').write('')"`,
+    'bash -c "rm .git/hooks/commit-msg"',
+    'pwsh -Command Remove-Item .git\\hooks\\commit-msg',
+    'ln -s /dev/null .git/hooks/commit-msg',
+    'ln -s .claude c',
+    'New-Item -ItemType SymbolicLink -Path c -Target .claude',
+    'rm -rf node_modules/test-guard',
+    'echo x > node_modules/test-guard/dist/cli.js',
+    'echo "[core]" > .git/config',
+    'rm -rf .git/test-guard/sessions',
+    'claude plugin disable test-guard@tonygwangsk',
+    'claude plugin disable --all',
+    'claude plugin uninstall test-guard',
+    'npm uninstall test-guard',
+    'pnpm remove -D test-guard',
+    'git commit --trailer "Test-Guard-Approved=x" -m y',
+    'git commit --trailer=Test-Guard-Approved=x -m y',
+    'git -c trailer.ok.key=Test-Guard-Approved commit --trailer ok=x -m y',
+    'GIT_CONFIG_GLOBAL=/tmp/g git commit -m x',
+    '$env:GIT_CONFIG_GLOBAL = "C:\\g"',
+    'git config include.path /tmp/x',
+    'git -c include.path=/tmp/x commit -m x',
+    'git config commit.template msg.txt',
+    'git config alias.c commit',
+    'git -c alias.c=commit c -m x',
+    `claude --settings '{"enabledPlugins": {"test-guard@x": false}}'`,
+    // Found by the round 2 re-check.
+    'HUSKY=0 git commit -am x',
+    'export HUSKY=0; git commit -am x',
+    'LEFTHOOK=0 git commit -am x',
+    'SKIP=test-guard git commit -am x',
+    'GIT_DIR=/tmp/other git commit -am x',
+    'git --git-dir=/tmp/x commit -am x',
+    'git config trailer.tga.key Test-Guard-Approved',
+    'npx claude plugin uninstall test-guard',
+    'rm -rf .claude',
+    'rm -rf ~/.claude/plugins',
+    'mv ~/.claude ~/.claude.bak',
+    'rm ~/.claude/plugins/installed_plugins.json',
+    'echo x > node_modules/.bin/test-guard',
+  ])('blocks %s', (command) => {
+    expect(findBypass(command, resolve('/repo'))).not.toEqual([]);
+  });
+
+  it.each([
+    'node node_modules/test-guard/dist/cli.js check',
+    './node_modules/.bin/test-guard check --staged',
+    'npx test-guard check',
+    'rm -f .git/index.lock',
+    'git commit -m "add alias.ts"',
+    'git commit -m "fix(test-guard): false positives"',
+    'cat .git/config',
+    'ls .git/hooks',
+    'npm uninstall lodash',
+    'claude plugin disable other-plugin',
+    'git config alias.co',
+    'echo x > out.txt 2>&1',
+    'rm .gitignore',
+    'cp a.md .claude/agents/',
+    'cd src && npm test',
+    'node scripts/build.js',
+    // Found by the round 2 re-check.
+    'git commit -am "docs: explain why --no-verify is banned"',
+    'git commit -am "docs: core.hooksPath notes"',
+    'git commit -am "feat: add [include] section parser"',
+    "git commit -am 'fix: honour GIT_CONFIG_GLOBAL=path in tests'",
+    'git merge --no-verify-signatures x',
+    'rm -rf .claude/agents/old.md',
+    'rm -rf node_modules',
+  ])('allows %s', (command) => {
+    expect(findBypass(command, resolve('/repo'))).toEqual([]);
+  });
+
+  it('splits redirections written without spaces', () => {
+    expect(splitCommand('echo x>a 2>&1 >>b')).toEqual([
+      ['echo', 'x', '>', 'a', '>>', 'b'],
+    ]);
   });
 });

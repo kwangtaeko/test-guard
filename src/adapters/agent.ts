@@ -41,6 +41,7 @@ import {
   type FileOp,
   fileOps,
   findBypass,
+  realPath,
 } from './shell.js';
 
 export interface Violation {
@@ -88,21 +89,29 @@ function rememberSessionStart(input: PreToolUseInput | StopInput): void {
 // Judges one file change with absolute paths (an edit applied in memory),
 // comparing it with the file on disk, so only what this tool call changes is
 // judged. The working tree as a whole is checked against HEAD at Stop.
-export function checkFileChange(change: PatchedFile): Violation[] {
+export function checkFileChange(input: PatchedFile): Violation[] {
+  // Where the write really lands: links, letter case and `::$DATA` resolved.
+  const change = {
+    ...input,
+    beforePath: input.beforePath && realPath(input.beforePath),
+    afterPath: input.afterPath && realPath(input.afterPath),
+  };
   const anchor = change.afterPath ?? change.beforePath;
   if (!anchor) return [];
   // Before the repository checks: settings outside the repository, such as
   // ~/.claude/settings.json, can turn hooks off too.
+  const untracked = [change.beforePath, change.afterPath]
+    .map((p) => p && untrackedGuard(p))
+    .find(Boolean);
+  if (untracked) return [untracked];
+  const unplugged = droppedPlugin(change);
+  if (unplugged) return [unplugged];
   const bypass = writtenBypass(change);
   if (bypass.length > 0) return bypass;
   const root = findRepoRoot(dirname(anchor));
   if (!root) return [];
   const before = change.beforePath ? repoPath(root, change.beforePath) : null;
   const after = change.afterPath ? repoPath(root, change.afterPath) : null;
-  const gitHook = [before, after].find((p) => p?.startsWith('.git/hooks/'));
-  if (gitHook)
-    return [{ ruleId: 'TG006', message: 'edits a git hook', path: gitHook }];
-  if ([before, after].some((p) => p?.startsWith('.git/'))) return [];
 
   const { config, ctx } = loadContext(root);
   const watched = (p: string | null) => p !== null && isWatched(p, ctx);
@@ -123,17 +132,91 @@ export function checkFileChange(change: PatchedFile): Violation[] {
   );
 }
 
+// Files that keep test-guard running but that git doesn't track, so neither
+// Stop nor CI would see a change: git internals (hooks, config, session
+// records), local Claude Code settings, the installed package and plugin.
+const UNTRACKED_GUARDS: [RegExp, string][] = [
+  [/(?:^|\/)\.git\/hooks(?:\/|$)/i, 'edits a git hook'],
+  [/(?:^|\/)\.git(?:\/|$)/i, 'edits git internals (.git)'],
+  [
+    /(?:^|\/)\.claude\/settings\.local\.json$/i,
+    'edits local Claude Code settings, which git does not track',
+  ],
+  [
+    /(?:^|\/)node_modules\/(?:\.bin\/)?test-guard(?:\.\w+)?(?:\/|$)/i,
+    'edits the installed test-guard',
+  ],
+  [/(?:^|\/)\.claude\/plugins\/.*test-guard/i, 'edits the test-guard plugin'],
+];
+
+// Claude Code settings (in or outside the repository) that enabled the
+// test-guard plugin and no longer do: the entry removed, or set to anything
+// but `true`.
+function droppedPlugin(change: PatchedFile): Violation | null {
+  const path = normalizePath(change.afterPath ?? '');
+  if (!/(?:^|\/)\.claude\/settings[\w.-]*\.json$/i.test(path)) return null;
+  const enabled = (text: string | null) => {
+    try {
+      const plugins = JSON.parse(text ?? '')?.enabledPlugins;
+      return Object.keys(plugins ?? {}).filter(
+        (k) => /^test-guard(?:@|$)/i.test(k) && plugins[k] === true,
+      );
+    } catch {
+      return [];
+    }
+  };
+  const after = new Set(enabled(change.after));
+  const lost = enabled(change.before).filter((k) => !after.has(k));
+  return lost.length > 0
+    ? {
+        ruleId: 'TG006',
+        message: `turns off the test-guard plugin (\`enabledPlugins\` ${lost[0]})`,
+        path,
+      }
+    : null;
+}
+
+function untrackedGuard(path: string): Violation | null {
+  const normalized = normalizePath(path);
+  const hit = UNTRACKED_GUARDS.find(([re]) => re.test(normalized));
+  return hit ? { ruleId: 'TG006', message: hit[1], path: normalized } : null;
+}
+
 // Text written into a file that only serves to get around test-guard: a
 // script that commits with `--no-verify`, a commit message carrying an
-// approval trailer, settings that turn hooks off. Markdown is exempt, since
-// docs describe these. Only lines this change adds are looked at.
+// approval trailer, settings that turn hooks off, git config that points
+// the hooks elsewhere. Markdown is exempt, since docs describe these. Only
+// lines this change adds are looked at.
 const WRITTEN_BYPASS: [RegExp, string][] = [
-  [/--no-verify/, '`--no-verify`, which skips test-guard’s git hook'],
-  [/core\.hookspath/i, '`core.hooksPath`, which skips test-guard’s git hook'],
+  [/--no-verify(?![\w-])/, '`--no-verify`, which skips test-guard’s git hook'],
+  [
+    /\bgit\s+commit\b[^\n]*\s-[a-zA-Z]*n[a-zA-Z]*(?=\s|$)|\bHUSKY\s*=\s*["']?0\b|\bLEFTHOOK\s*=\s*["']?(?:0|false)\b/m,
+    'a commit that skips the git hook (`-n`, `HUSKY=0`, `LEFTHOOK=0`)',
+  ],
+  [
+    /core\.hookspath|^\s*hookspath\s*=/im,
+    '`core.hooksPath`, which skips test-guard’s git hook',
+  ],
   [/disableAllHooks/, '`disableAllHooks`, which turns off agent hooks'],
   [
-    /^test-guard-approved\s*:/im,
+    /test-guard-approved\s*[:=]/i,
     'a `Test-Guard-Approved` trailer (only humans approve)',
+  ],
+  [
+    /["']test-guard(?:@[^"'\s:]*)?\\?["']\s*:\s*false\b/,
+    '`enabledPlugins` turning test-guard off',
+  ],
+  [
+    /\bclaude\s+plugins?\s+(?:disable|uninstall|remove)\b|\b(?:npm|pnpm|yarn|bun)\s+(?:uninstall|un|remove|rm|r)\b[^\n]*\btest-guard\b/,
+    'a command that removes test-guard',
+  ],
+  [
+    /\bGIT_CONFIG(?:_GLOBAL|_SYSTEM|_PARAMETERS)?\s*=/,
+    'a git config override, which can skip test-guard’s git hook',
+  ],
+  [
+    /^\s*\[\s*(?:include(?:If\b[^\]]*)?|alias)\s*\]|\binclude(?:If\.\S*)?\.path\b|\bcommit\.template\b|\bgit\b[^\n]*\balias\.[\w-]+/im,
+    'a git include, alias or commit template, which can skip test-guard',
   ],
 ];
 
@@ -154,7 +237,7 @@ function writtenBypass(change: PatchedFile): Violation[] {
 }
 
 export function checkShell(command: string, cwd: string): Violation[] {
-  const violations: Violation[] = findBypass(command).map((message) => ({
+  const violations: Violation[] = findBypass(command, cwd).map((message) => ({
     ruleId: 'TG006',
     message,
   }));
@@ -191,9 +274,10 @@ function checkFileOps(
   for (const op of ops) {
     const dest = op.dest ? repoPath(root, op.dest) : null;
     const destIsDir =
-      op.dest !== undefined &&
-      existsSync(op.dest) &&
-      statSync(op.dest).isDirectory();
+      op.destIsDir === true ||
+      (op.dest !== undefined &&
+        existsSync(op.dest) &&
+        statSync(op.dest).isDirectory());
     for (const source of op.sources) {
       const src = repoPath(root, source);
       if (src === null) continue;

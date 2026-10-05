@@ -124,13 +124,13 @@ git commit -m "test: skip flaky subtraction" -m "Test-Guard-Approved: tracked in
 
 | ID | Detects |
 |---|---|
-| TG001 | A test file deleted, or moved to a path that is not a test |
-| TG002 | Fewer test cases in a file |
+| TG001 | A test file deleted, or moved to a path that is not a test (including folders pytest skips, such as `build/`, `dist/`, `.*`, `venv/`) |
+| TG002 | Fewer test cases in a file (Python: only tests pytest/unittest collect, a name defined twice counts once; Java: tests in an inner class that lost `@Nested`) |
 | TG003 | Fewer assertions in a file |
-| TG004 | Added skip / disable / focus: `it.skip`, `xit`, `.only`, `.todo`, `@pytest.mark.skip`, `xfail`, `@Disabled`, `@Ignore`, … |
-| TG005 | Test runner config tampering: `passWithNoTests`, `testPathIgnorePatterns`, pytest `addopts` with `-k`/`--deselect`/`--ignore`, `collect_ignore`, Maven `skipTests`/`testFailureIgnore`, Gradle `enabled = false`/`ignoreFailures`, … |
-| TG006 | Getting around test-guard: changing `.test-guard.json`, removing it from hook/CI files, `git commit --no-verify`, `core.hooksPath` changes, `Test-Guard-Approved` trailers or `TEST_GUARD_*` variables from an agent |
-| TG007 | Weaker assertions: `toBe(3)` → `toBeDefined()`, `assertEqual` → `assertTrue`, `toThrow(X)` → `toThrow()`, `pytest.raises(ValueError)` → `pytest.raises(Exception)`, and meaningless ones like `expect(true).toBe(true)` |
+| TG004 | Added skip / disable / focus: `it.skip`, `xit`, `.only`, `.todo`, `test.failing`, `{ skip: true }`, `this.skip()`, `@pytest.mark.skip` (also under import aliases), `xfail`, `__test__ = False`, `@Disabled`, `@Ignore`, `Assumptions.abort()`, TestNG `enabled = false`, … — and test or assertion functions replaced in the file (`const expect = …`, `expect.extend` over a built-in matcher, a local `assertEquals`, a `Test` annotation that isn't JUnit's) |
+| TG005 | Test runner config tampering: `passWithNoTests`, `testPathIgnorePatterns`, `setupFiles`/`globalSetup`, pytest `addopts` with `-k`/`--deselect`/`--ignore`, `collect_ignore`, `pytest_*` hooks in `conftest.py`, Maven `skipTests`/`testFailureIgnore`/`groups`/`includes`, Gradle `enabled = false`/`ignoreFailures`/`excludeTags`, … |
+| TG006 | Getting around test-guard: changing `.test-guard.json`; removing or changing the line that runs it in hook/CI files (`\|\| true`, a narrower hook matcher, `continue-on-error`); from an agent: `git commit --no-verify`, `core.hooksPath`, git aliases/includes/`GIT_CONFIG_GLOBAL`, `Test-Guard-Approved` trailers, `TEST_GUARD_*` variables, disabling or uninstalling the plugin, and writing `.git/`, `.claude/settings.local.json` or `node_modules/test-guard` |
+| TG007 | Weaker assertions: `toBe(3)` → `toBeDefined()` / `not.toBe(…)` / `toBeGreaterThan(…)`, `assertEqual` → `assertTrue` / `assertNotEqual`, `assert x == y` → `assert x != y`, `toThrow(X)` → `toThrow()`, `pytest.raises(ValueError)` → `pytest.raises(Exception)`, and meaningless ones like `expect(true).toBe(true)` |
 
 Languages: TypeScript/JavaScript (Jest, Vitest, Mocha), Python (pytest,
 unittest) and Java (JUnit 4/5).
@@ -271,14 +271,25 @@ repos:
   syntax can be miscounted. Moving tests between files counts as a decrease in
   one file.
 - **In-shell edits** (`sed -i`, `node -e`, scripts) aren't visible before they
-  run; they are caught at Stop, at commit and in CI.
+  run; they are caught at Stop, at commit and in CI. Shell analysis follows
+  `cd`, `bash -c "…"` and links that already exist, but doesn't expand
+  variables, read script files, or guess what an unknown list piped into
+  `xargs rm` holds.
+- **Any change to a line that runs test-guard** in hook or CI files needs
+  human approval (version bumps aside). Workflow trigger changes (`on:`,
+  `paths-ignore`) and reusing a human's approval trailer with
+  `git commit --amend` aren't caught before the commit; Stop and CI still
+  see the result.
+- **Guesses by name**: a Python class whose base has `Test` in its name is
+  taken as a TestCase subclass; custom `norecursedirs` aren't read. JS test
+  functions imported from somewhere else (`import { it } from './fake'`) and
+  unicode escapes in JS identifiers aren't detected.
 - **Tests that still look intact but no longer check anything** keep their
   counts, so they aren't detected yet: an early `return`, assertions wrapped in
   `try { … } catch {}`, a test inside `if (false)`, an empty `it.each([])`,
   mocking the module under test, or changing expected values to match a bug.
   These need syntax-aware analysis (planned).
-- **Not yet**: C#, Go, Rust, node:test option-style skips (`{ skip: true }`),
-  other agents.
+- **Not yet**: C#, Go, Rust, other agents.
 
 ## License
 

@@ -197,6 +197,42 @@ describe('TG007', () => {
       '        assertThrows(Exception.class, () -> f());',
       'weakened assertion `assertThrows(SpecificException.class)` → `assertThrows(Exception.class)`',
     ],
+    [
+      'a.test.js',
+      'expect(f()).toBe(3);',
+      'expect(f()).not.toBe(4);',
+      'weakened assertion `toBe` → `not.toBe`',
+    ],
+    [
+      'a.test.js',
+      'expect(list).toHaveLength(3);',
+      'expect(list.length).toBeGreaterThan(0);',
+      'weakened assertion `toHaveLength` → `toBeGreaterThan`',
+    ],
+    [
+      'test_a.py',
+      '    assert f() == 3',
+      '    assert f() != 4',
+      'weakened assertion `assert x == y` → `assert x != y`',
+    ],
+    [
+      'test_a.py',
+      '    assert len(f()) == 3',
+      '    assert len(f()) >= 1',
+      'weakened assertion `assert x == y` → `assert x < y`',
+    ],
+    [
+      'test_a.py',
+      '        self.assertEqual(f(), 3)',
+      '        self.assertGreater(f(), 0)',
+      'weakened assertion `self.assertEqual` → `self.assertGreater`',
+    ],
+    [
+      'src/test/java/ATest.java',
+      '        assertEquals(3, f());',
+      '        assertNotEquals(4, f());',
+      'weakened assertion `assertEquals` → `assertNotEquals`',
+    ],
   ])('%s: %s → %s', (path, from, to, message) => {
     expect(swap(path, from, to)).toEqual([
       { ruleId: 'TG007', line: 1, message },
@@ -234,8 +270,28 @@ describe('TG007', () => {
       '        assertEquals(4, f());',
     ],
     ['a.test.js', '// expect(f()).toBe(3);', '// expect(f()).toBeDefined();'],
+    ['a.test.js', 'expect(f()).not.toBe(3);', 'expect(f()).not.toBe(4);'],
+    ['a.test.js', 'expect(f()).not.toBe(3);', 'expect(f()).toBe(4);'],
+    ['a.test.js', 'expect(f()).toBe(0.3);', 'expect(f()).toBeCloseTo(0.3);'],
+    ['test_a.py', '    assert f() != 3', '    assert f() != 4'],
+    ['test_a.py', '    assert f() >= 3', '    assert f() == 4'],
   ])('%s: accepts %s → %s', (path, from, to) => {
     expect(swap(path, from, to)).toEqual([]);
+  });
+
+  it('accepts a Black-style multi-line assert', () => {
+    expect(
+      check({
+        before: file('test_a.py', 'def test_a():', '    assert f() == 1'),
+        after: file(
+          'test_a.py',
+          'def test_a():',
+          '    assert (',
+          '        f() == 1',
+          '    )',
+        ),
+      }),
+    ).toEqual([]);
   });
 
   it('pairs strong lines with strong replacements first', () => {
@@ -342,6 +398,104 @@ describe('TG005', () => {
       ['tasks.test {', '  ignoreFailures = true', '}'],
       'added `ignoreFailures`',
     ],
+    [
+      'build.gradle',
+      ['test {', '  useJUnitPlatform()', '}'],
+      ['test {', "  useJUnitPlatform { excludeTags 'slow' }", '}'],
+      'added `excludeTags`',
+    ],
+    [
+      'build.gradle.kts',
+      ['tasks.test {', '}'],
+      ['tasks.test {', '  useJUnitPlatform { includeTags("fast") }', '}'],
+      'added `includeTags`',
+    ],
+    [
+      'pom.xml',
+      ['<configuration>', '</configuration>'],
+      [
+        '<configuration>',
+        '  <excludedGroups>slow</excludedGroups>',
+        '</configuration>',
+      ],
+      'added `<groups>`',
+    ],
+    [
+      'pom.xml',
+      ['<configuration>', '</configuration>'],
+      ['<configuration>', '  <groups>fast</groups>', '</configuration>'],
+      'added `<groups>`',
+    ],
+    [
+      'pom.xml',
+      ['<configuration>', '</configuration>'],
+      [
+        '<configuration>',
+        '  <includes><include>**/Smoke*</include></includes>',
+        '</configuration>',
+      ],
+      'added `<include>`',
+    ],
+    [
+      'tests/conftest.py',
+      ['import pytest'],
+      ['import pytest', 'def pytest_runtest_makereport(item, call):'],
+      'added `pytest_* hook`',
+    ],
+    [
+      'jest.config.js',
+      ['module.exports = {};'],
+      ["module.exports = { setupFilesAfterEnv: ['./stub.js'] };"],
+      'added `setupFilesAfterEnv`',
+    ],
+    [
+      'vitest.config.ts',
+      ['export default {', '  test: {},', '};'],
+      ['export default {', "  test: { globalSetup: './g.ts' },", '};'],
+      'added `globalSetup`',
+    ],
+    [
+      'package.json',
+      ['{', '  "jest": {', '  }', '}'],
+      ['{', '  "jest": {', '    "setupFiles": ["./s.js"]', '  }', '}'],
+      'added `setupFiles`',
+    ],
+    [
+      'pytest.ini',
+      ['[pytest]', 'addopts = -q'],
+      ['[pytest]', 'addopts = -q -m "not slow"'],
+      'added `-m`',
+    ],
+    [
+      'pytest.ini',
+      ['[pytest]', 'addopts = -q'],
+      ['[pytest]', 'addopts = -q --co'],
+      'added `--collect-only`',
+    ],
+    [
+      'conftest.py',
+      ['import pytest'],
+      ['import pytest', 'pytest_plugins = ["helpers.off"]'],
+      'added `pytest_plugins`',
+    ],
+    [
+      'build.gradle',
+      ['test {', '}'],
+      ['test.enabled false', 'test {', '}'],
+      'added `enabled = false`',
+    ],
+    [
+      'pom.xml',
+      ['<configuration>', '</configuration>'],
+      ['<configuration>', '  <test>NoSuchTest</test>', '</configuration>'],
+      'added `<test>`',
+    ],
+    [
+      'vitest.workspace.ts',
+      ['export default [];'],
+      ["export default [{ test: { exclude: ['**'] } }];"],
+      'added `exclude`',
+    ],
   ])('%s: reports %s', (path, from, to, message) => {
     expect(change(path, from, to)).toEqual([
       { ruleId: 'TG005', line: expect.any(Number), message },
@@ -364,6 +518,56 @@ describe('TG005', () => {
       ],
     ],
     ['pyproject.toml', ['[tool.ruff]'], ['[tool.ruff]', 'ignore = ["E501"]']],
+    [
+      'conftest.py',
+      ['import pytest'],
+      ['import pytest', '', '@pytest.fixture', 'def client(): return 1'],
+    ],
+    [
+      'build.gradle',
+      ['test {', '}'],
+      ['test {', '  maxParallelForks = 4', '}'],
+    ],
+    [
+      'conftest.py',
+      ['import pytest'],
+      [
+        'import pytest',
+        'def pytest_configure(config):',
+        '    config.addinivalue_line("markers", "slow: slow tests")',
+      ],
+    ],
+    [
+      'vitest.config.ts',
+      ['export default {', '  test: {', '  },', '};'],
+      [
+        'export default {',
+        '  test: {',
+        '    coverage: {',
+        "      include: ['src/**'],",
+        "      exclude: ['dist/**'],",
+        '    },',
+        '  },',
+        '};',
+      ],
+    ],
+    [
+      'vitest.config.ts',
+      ['export default { test: {} };'],
+      ["export default { test: { coverage: { include: ['src/**'] } } };"],
+    ],
+    [
+      'pom.xml',
+      ['<build>', '</build>'],
+      [
+        '<build>',
+        '  <resources><resource>',
+        '    <includes><include>**/*.yml</include></includes>',
+        '  </resource></resources>',
+        '</build>',
+      ],
+    ],
+    ['tox.ini', ['[testenv]'], ['[testenv]', 'commands = python -m pytest']],
   ])('%s: accepts unrelated changes', (path, from, to) => {
     expect(change(path, from, to)).toEqual([]);
   });
@@ -426,6 +630,137 @@ describe('TG006', () => {
     ).toMatchObject([{ ruleId: 'TG006' }]);
   });
 
+  it.each([
+    [
+      '.husky/pre-commit',
+      ['npx test-guard check --staged'],
+      ['npx test-guard check --staged || true'],
+      'changed how test-guard runs: `npx test-guard check --staged`',
+    ],
+    [
+      'package.json',
+      ['{', '  "scripts": { "precommit": "test-guard check --staged" }', '}'],
+      [
+        '{',
+        '  "scripts": { "precommit": "test-guard check --rules TG001" }',
+        '}',
+      ],
+      'changed how test-guard runs: `"scripts": { "precommit": "test-guard check --staged" }`',
+    ],
+    [
+      '.claude/settings.json',
+      [
+        '{"hooks": {"PreToolUse": [{"matcher": "Edit|Write|Bash",',
+        '  "hooks": [{"type": "command", "command": "test-guard hook claude-code pre-tool-use"}]}]}}',
+      ],
+      [
+        '{"hooks": {"PreToolUse": [{"matcher": "Read",',
+        '  "hooks": [{"type": "command", "command": "test-guard hook claude-code pre-tool-use"}]}]}}',
+      ],
+      "changed the matcher of test-guard's hook (PreToolUse Edit, PreToolUse Write, PreToolUse Bash)",
+    ],
+    [
+      '.github/workflows/ci.yml',
+      [
+        '      - uses: kwangtaeko/test-guard@v0',
+        '        with: { base: main }',
+      ],
+      [
+        '      - uses: kwangtaeko/test-guard@v0',
+        '        continue-on-error: true',
+        '        with: { base: main }',
+      ],
+      'made test-guard’s CI step non-blocking (`continue-on-error`)',
+    ],
+    [
+      '.github/workflows/ci.yml',
+      ['  guard:', '    steps:', '      - uses: kwangtaeko/test-guard@v0'],
+      [
+        '  guard:',
+        '    continue-on-error: true',
+        '    steps:',
+        '      - uses: kwangtaeko/test-guard@v0',
+      ],
+      'made test-guard’s CI step non-blocking (`continue-on-error`)',
+    ],
+    [
+      '.husky/pre-commit',
+      ['npx test-guard check --staged'],
+      ['exit 0', 'npx test-guard check --staged'],
+      'added a condition that can keep test-guard from running: `exit 0`',
+    ],
+    [
+      '.husky/pre-commit',
+      ['npx test-guard check --staged'],
+      ['if [ -n "$NEVER" ]; then', '  npx test-guard check --staged', 'fi'],
+      'added a condition that can keep test-guard from running: `if [ -n "$NEVER" ]; then`',
+    ],
+    [
+      '.github/workflows/ci.yml',
+      [
+        '      - uses: kwangtaeko/test-guard@v0',
+        '        with: { base: main }',
+      ],
+      [
+        '      - uses: kwangtaeko/test-guard@v0',
+        '        if: false',
+        '        with: { base: main }',
+      ],
+      'added a condition that can keep test-guard from running: `if: false`',
+    ],
+    [
+      'lefthook.yml',
+      [
+        'pre-commit:',
+        '  commands:',
+        '    guard:',
+        '      run: test-guard check --staged',
+      ],
+      [
+        'pre-commit:',
+        '  commands:',
+        '    guard:',
+        '      skip: true',
+        '      run: test-guard check --staged',
+      ],
+      'added a condition that can keep test-guard from running: `skip: true`',
+    ],
+    [
+      '.claude/settings.json',
+      [
+        '{"hooks": {"PreToolUse": [{"matcher": "Edit", "hooks": [{',
+        '  "type": "command",',
+        '  "command": "test-guard hook claude-code pre-tool-use"',
+        '}]}]}}',
+      ],
+      [
+        '{"hooks": {"PreToolUse": [{"matcher": "Edit", "hooks": [{',
+        '  "type": "prompt",',
+        '  "command": "test-guard hook claude-code pre-tool-use"',
+        '}]}]}}',
+      ],
+      "removed or changed test-guard's hook (PreToolUse)",
+    ],
+  ])('%s: reports %s → %s', (path, from, to, message) => {
+    expect(
+      check({ before: file(path, ...from), after: file(path, ...to) }),
+    ).toEqual([{ ruleId: 'TG006', line: undefined, message }]);
+  });
+
+  it('reports a hook file renamed away', () => {
+    expect(
+      check({
+        before: file('.husky/pre-commit', 'npx test-guard check --staged'),
+        after: file('.husky/pre-commit.bak', 'npx test-guard check --staged'),
+      }),
+    ).toMatchObject([
+      {
+        ruleId: 'TG006',
+        message: 'renamed .husky/pre-commit, which ran test-guard',
+      },
+    ]);
+  });
+
   it('reports a deleted hook file that ran test-guard', () => {
     expect(
       check({
@@ -438,8 +773,80 @@ describe('TG006', () => {
   it.each([
     [
       '.husky/pre-commit',
-      ['npx test-guard check'],
+      ['npx test-guard check', '  # trailing'],
+      ['set -e', '  npx test-guard check', 'npx test-guard check --staged'],
+    ],
+    [
+      '.github/workflows/ci.yml',
+      ['  guard:', '    steps:', '      - uses: kwangtaeko/test-guard@v0'],
+      [
+        '  guard:',
+        '    steps:',
+        '      - uses: kwangtaeko/test-guard@v0',
+        '  lint:',
+        '    continue-on-error: true',
+        '    steps:',
+        '      - run: npm run lint',
+      ],
+    ],
+    [
+      '.claude/settings.json',
+      [
+        '{"hooks": {"PreToolUse": [{"matcher": "Edit|Write|Bash", "hooks": [{',
+        '  "command": "test-guard hook claude-code pre-tool-use"',
+        '}]}]}}',
+      ],
+      [
+        '{"hooks": {"PreToolUse": [{"matcher": "Edit|Write|Bash", "hooks": [{',
+        '  "command": "test-guard hook claude-code pre-tool-use"',
+        '}]}, {"matcher": "Read", "hooks": [{"command": "echo"}]}]}}',
+      ],
+    ],
+    [
+      '.claude/settings.json',
+      [
+        '{"hooks": {"PreToolUse": [{"matcher": "Edit|Write|Bash", "hooks": [{',
+        '  "command": "test-guard hook claude-code pre-tool-use"',
+        '}]}]}}',
+      ],
+      [
+        '{"hooks":{"PreToolUse":[{"matcher":"Edit|Write|Bash|NotebookEdit","hooks":[{"command":"test-guard hook claude-code pre-tool-use"}]}]}}',
+      ],
+    ],
+    [
+      'package.json',
+      ['{', '  "devDependencies": {', '    "test-guard": "^0.1.0"', '  }', '}'],
+      ['{', '  "devDependencies": {', '    "test-guard": "^0.1.1"', '  }', '}'],
+    ],
+    [
+      '.github/workflows/ci.yml',
+      ['      - run: npx test-guard@0.1 check --base main'],
+      ['      - run: npx test-guard@0.2 check --base main'],
+    ],
+    [
+      '.github/workflows/ci.yml',
+      [
+        '  guard:',
+        '    steps:',
+        '      - uses: kwangtaeko/test-guard@v0',
+        '  web:',
+        '    steps:',
+        '      - run: npm test',
+      ],
+      [
+        '  guard:',
+        '    steps:',
+        '      - uses: kwangtaeko/test-guard@v0',
+        '  web:',
+        "    if: github.event_name == 'push'",
+        '    steps:',
+        '      - run: cd web && npm test',
+      ],
+    ],
+    [
+      '.husky/pre-commit',
       ['npx test-guard check --staged'],
+      ['npx test-guard check --staged', 'if [ -f x ]; then exit 0; fi'],
     ],
     ['.husky/pre-commit', ['npm test'], ['npm run lint']],
     ['fixtures/x/.test-guard.json', ['{}'], ['{"rules":{}}']],

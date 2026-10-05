@@ -7,9 +7,11 @@ import { count } from './strip.js';
 
 export interface LanguageSpec {
   strip(source: string): string;
-  tests: RegExp;
+  // A function when counting needs more than a pattern (scopes, duplicates).
+  tests: RegExp | ((code: string) => number);
   assertions: RegExp;
-  skips: RegExp;
+  // A function when the pattern depends on the file (imported aliases).
+  skips: RegExp | ((code: string) => RegExp);
 }
 
 export interface SkipMatch {
@@ -36,16 +38,21 @@ export function analyzeSource(
 ): Analysis {
   const spec = SPECS[language];
   const code = spec.strip(toLf(source));
+  const skips =
+    typeof spec.skips === 'function' ? spec.skips(code) : spec.skips;
   return {
     stats: {
       path: normalizePath(path),
       language,
-      tests: count(code, spec.tests),
+      tests:
+        typeof spec.tests === 'function'
+          ? spec.tests(code)
+          : count(code, spec.tests),
       assertions: count(code, spec.assertions),
-      skips: count(code, spec.skips),
+      skips: count(code, skips),
     },
     lines: code.split('\n'),
-    skips: findMatches(code, spec.skips),
+    skips: findMatches(code, skips),
   };
 }
 
@@ -63,7 +70,13 @@ function findMatches(code: string, pattern: RegExp): SkipMatch[] {
   let pos = 0;
   for (const match of code.matchAll(pattern)) {
     for (; pos < match.index; pos++) if (code[pos] === '\n') line++;
-    matches.push({ line, text: match[0].replace(/\s*\($/, '') });
+    matches.push({
+      line,
+      text: match[0]
+        .replace(/\s*\($/, '')
+        .replace(/\s+/g, ' ')
+        .trim(),
+    });
   }
   return matches;
 }

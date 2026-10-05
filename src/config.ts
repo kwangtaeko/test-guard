@@ -72,15 +72,15 @@ export function parseConfig(text: string | null): Config {
 
 export function createContext(config: Config): CompareContext {
   const patterns = {} as Record<Language, string[]>;
+  const include = {} as Record<Language, string[]>;
   for (const language of LANGUAGES) {
-    patterns[language] = config.languages.includes(language)
-      ? [
-          ...DEFAULT_TEST_PATTERNS[language],
-          ...config.include.filter((p) => patternLanguage(p) === language),
-        ]
+    const enabled = config.languages.includes(language);
+    patterns[language] = enabled ? DEFAULT_TEST_PATTERNS[language] : [];
+    include[language] = enabled
+      ? config.include.filter((p) => patternLanguage(p) === language)
       : [];
   }
-  const match = createTestFileMatcher(patterns);
+  const match = createTestFileMatcher(patterns, include);
   const isExcluded =
     config.exclude.length > 0
       ? picomatch(config.exclude, { dot: true })

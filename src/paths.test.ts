@@ -22,6 +22,9 @@ describe('createTestFileMatcher', () => {
     ['.config/check.test.js', 'js'],
     ['test_user.py', 'python'],
     ['pkg/tests/user_test.py', 'python'],
+    ['builder/tests/test_user.py', 'python'],
+    ['dist_utils/test_user.py', 'python'],
+    ['build/user.test.js', 'js'],
     ['src/test/java/com/x/UserTest.java', 'java'],
     ['module/src/test/java/UserTest.java', 'java'],
     ['anywhere/UserTests.java', 'java'],
@@ -38,6 +41,13 @@ describe('createTestFileMatcher', () => {
     'src/testing.py',
     'src/main/java/UserTest.java',
     'src/test/java/TestUtils.java',
+    'build/tests/test_user.py',
+    'pkg/dist/test_user.py',
+    '.cache/test_user.py',
+    'venv/lib/test_user.py',
+    'node_modules/x/test_user.py',
+    'pkg.egg/test_user.py',
+    'node_modules/x/user.test.js',
   ])('ignores %s', (path) => {
     expect(detect(path)).toBeNull();
   });
@@ -50,5 +60,13 @@ describe('createTestFileMatcher', () => {
     });
     expect(custom('e2e/login.ts')).toBe('js');
     expect(custom('user.test.ts')).toBeNull();
+  });
+
+  it('takes included patterns as given', () => {
+    const custom = createTestFileMatcher(undefined, {
+      python: ['build/checks/*.py'],
+    });
+    expect(custom('build/checks/smoke.py')).toBe('python');
+    expect(custom('build/test_user.py')).toBeNull();
   });
 });

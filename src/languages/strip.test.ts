@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { stripCLike, stripPython } from './strip.js';
+import { stripCLike, stripJava, stripPython } from './strip.js';
 
 const js = (src: string) =>
   stripCLike(src, { templateLiterals: true, textBlocks: false });
@@ -18,9 +18,37 @@ describe('stripCLike', () => {
     expect(js(`x = "say \\"hi\\" // no";`)).toBe(`x = "                ";`);
   });
 
-  it('blanks multi-line template literals', () => {
+  it('blanks multi-line template literals but keeps expression code', () => {
     // biome-ignore lint/suspicious/noTemplateCurlyInString: JS source under test
-    expect(js('t = `expect(\n${x}`;')).toBe('t = `       \n    `;');
+    expect(js('t = `expect(\n${x}`;')).toBe('t = `       \n  x `;');
+  });
+
+  it('follows templates nested in expressions', () => {
+    // biome-ignore lint/suspicious/noTemplateCurlyInString: JS source under test
+    const src = 's = `${a ? `${"`"}` : {}}`;\nit.skip(x);\nu = `it(`;';
+    const out = js(src).split('\n');
+    expect(out[0]).toContain('a ? ');
+    expect(out[0]).not.toContain('"`"');
+    expect(out[1]).toBe('it.skip(x);');
+    expect(out[2]).toBe('u = `   `;');
+  });
+
+  it('decodes Java unicode escapes, keeping lines', () => {
+    const src = [
+      'class A {',
+      '  // \\u000a @Disabled',
+      '  \\u0040Disabled void a() {}',
+      '  String s = "\\\\u0040Test";',
+      '}',
+    ].join('\n');
+    const out = stripJava(src).split('\n');
+    expect(out).toHaveLength(5);
+    expect(out[1]).toContain('@Disabled');
+    expect(out[2]).toContain('@Disabled void a()');
+    expect(out[3]).not.toContain('@');
+    // The decoded quote closes the string.
+    expect(stripJava('s = "\\u0022; @Test')).toContain('@Test');
+    expect(java('s = "\\u0022; @Test')).not.toContain('@Test');
   });
 
   it('handles Java text blocks and char literals', () => {

@@ -122,13 +122,13 @@ git commit -m "test: skip flaky subtraction" -m "Test-Guard-Approved: tracked in
 
 | ID | 잡아내는 것 |
 |---|---|
-| TG001 | 테스트 파일 삭제, 또는 테스트가 아닌 경로로 이동 |
-| TG002 | 파일의 테스트 케이스 수 감소 |
+| TG001 | 테스트 파일 삭제, 또는 테스트가 아닌 경로로 이동 (pytest가 건너뛰는 `build/`, `dist/`, `.*`, `venv/` 같은 폴더 포함) |
+| TG002 | 파일의 테스트 케이스 수 감소 (Python: pytest/unittest가 실제로 수집하는 테스트만, 같은 이름을 두 번 정의하면 하나로 계산; Java: `@Nested`가 빠진 내부 클래스의 테스트) |
 | TG003 | 파일의 assertion 수 감소 |
-| TG004 | skip / disable / focus 추가: `it.skip`, `xit`, `.only`, `.todo`, `@pytest.mark.skip`, `xfail`, `@Disabled`, `@Ignore` 등 |
-| TG005 | 테스트 러너 설정 변조: `passWithNoTests`, `testPathIgnorePatterns`, pytest `addopts`의 `-k`/`--deselect`/`--ignore`, `collect_ignore`, Maven `skipTests`/`testFailureIgnore`, Gradle `enabled = false`/`ignoreFailures` 등 |
-| TG006 | test-guard 우회: `.test-guard.json` 변경, 훅·CI 파일에서 test-guard 제거, `git commit --no-verify`, `core.hooksPath` 변경, 에이전트의 `Test-Guard-Approved` 트레일러·`TEST_GUARD_*` 변수 설정 |
-| TG007 | assertion 약화: `toBe(3)` → `toBeDefined()`, `assertEqual` → `assertTrue`, `toThrow(X)` → `toThrow()`, `pytest.raises(ValueError)` → `pytest.raises(Exception)`, 그리고 `expect(true).toBe(true)` 같은 의미 없는 assertion |
+| TG004 | skip / disable / focus 추가: `it.skip`, `xit`, `.only`, `.todo`, `test.failing`, `{ skip: true }`, `this.skip()`, `@pytest.mark.skip`(import 별칭 포함), `xfail`, `__test__ = False`, `@Disabled`, `@Ignore`, `Assumptions.abort()`, TestNG `enabled = false` 등 — 그리고 파일 안에서 테스트·assertion 함수를 바꿔치기한 경우(`const expect = …`, 기본 matcher를 덮어쓰는 `expect.extend`, 로컬 `assertEquals`, JUnit이 아닌 `Test` 어노테이션) |
+| TG005 | 테스트 러너 설정 변조: `passWithNoTests`, `testPathIgnorePatterns`, `setupFiles`/`globalSetup`, pytest `addopts`의 `-k`/`--deselect`/`--ignore`, `collect_ignore`, `conftest.py`의 `pytest_*` 훅, Maven `skipTests`/`testFailureIgnore`/`groups`/`includes`, Gradle `enabled = false`/`ignoreFailures`/`excludeTags` 등 |
+| TG006 | test-guard 우회: `.test-guard.json` 변경; 훅·CI 파일에서 test-guard를 실행하는 줄의 삭제·변경(`\|\| true`, 훅 matcher 축소, `continue-on-error`); 에이전트의 `git commit --no-verify`, `core.hooksPath`, git alias·include·`GIT_CONFIG_GLOBAL`, `Test-Guard-Approved` 트레일러, `TEST_GUARD_*` 변수, 플러그인 비활성화·제거, `.git/`·`.claude/settings.local.json`·`node_modules/test-guard` 쓰기 |
+| TG007 | assertion 약화: `toBe(3)` → `toBeDefined()` / `not.toBe(…)` / `toBeGreaterThan(…)`, `assertEqual` → `assertTrue` / `assertNotEqual`, `assert x == y` → `assert x != y`, `toThrow(X)` → `toThrow()`, `pytest.raises(ValueError)` → `pytest.raises(Exception)`, 그리고 `expect(true).toBe(true)` 같은 의미 없는 assertion |
 
 지원 언어: TypeScript/JavaScript(Jest, Vitest, Mocha), Python(pytest, unittest),
 Java(JUnit 4/5).
@@ -263,12 +263,19 @@ repos:
 - **AST가 아니라 정규식입니다.** 주석과 문자열 내용은 무시하지만, 특이한 문법은 잘못 셀 수
   있습니다. 테스트를 다른 파일로 옮기면 원래 파일에서는 감소로 보고됩니다.
 - **셸 내부 편집**(`sed -i`, `node -e`, 스크립트)은 실행 전에 내용을 알 수 없어서, Stop·커밋·CI
-  단계에서 잡힙니다.
+  단계에서 잡힙니다. 셸 분석은 `cd`, `bash -c "…"`, 이미 있는 링크는 따라가지만, 변수 확장,
+  스크립트 파일 읽기, `xargs rm`에 넘어가는 알 수 없는 목록 추측은 하지 않습니다.
+- **훅·CI 파일에서 test-guard를 실행하는 줄은 어떤 변경이든**(버전 올리기 제외) 사람 승인이
+  필요합니다. 워크플로 트리거 변경(`on:`, `paths-ignore`)과 `git commit --amend`로 사람의 승인
+  트레일러를 재사용하는 것은 커밋 전에 잡지 못하며, Stop과 CI에서 결과를 봅니다.
+- **이름으로 추정하는 부분**: Python 클래스의 부모 이름에 `Test`가 들어 있으면 TestCase 하위
+  클래스로 봅니다. 사용자 지정 `norecursedirs`는 읽지 않습니다. 다른 곳에서 import한 JS 테스트
+  함수(`import { it } from './fake'`)와 JS 식별자 안의 유니코드 이스케이프는 잡지 못합니다.
 - **겉모양은 그대로인데 실제로는 아무것도 검사하지 않는 테스트**는 개수가 그대로라 아직 잡지
   못합니다: 테스트 앞부분의 `return`, `try { … } catch {}`로 감싼 assertion, `if (false)` 안의
   테스트, 빈 `it.each([])`, 테스트 대상 모듈을 mock으로 바꾸기, 버그에 맞춰 기대값 바꾸기.
   문법을 이해하는 분석(계획 중)이 필요합니다.
-- **아직 지원하지 않음**: C#, Go, Rust, node:test의 옵션 형태 skip(`{ skip: true }`), 다른 에이전트.
+- **아직 지원하지 않음**: C#, Go, Rust, 다른 에이전트.
 
 ## 라이선스
 
