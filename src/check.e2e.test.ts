@@ -59,6 +59,19 @@ describe('rule scenarios (worktree mode)', () => {
     ['TG007/java-throws', [{ ruleId: 'TG007', path: JAVA_TEST, line: 10 }]],
     ['TG007/trivial', [{ ruleId: 'TG007', path: JS_TEST, line: 14 }]],
     ['TG007/value-change', []],
+    [
+      'TG005/package-json',
+      [{ ruleId: 'TG005', path: 'package.json', line: 4 }],
+    ],
+    [
+      'TG005/pytest-addopts',
+      [{ ruleId: 'TG005', path: 'pyproject.toml', line: 2 }],
+    ],
+    ['TG005/maven-skip', [{ ruleId: 'TG005', path: 'pom.xml', line: 4 }]],
+    ['TG005/new-package', []],
+    ['TG006/config-change', [{ ruleId: 'TG006', path: '.test-guard.json' }]],
+    ['TG006/husky-removed', [{ ruleId: 'TG006', path: '.husky/pre-commit' }]],
+    ['TG006/husky-edit', []],
     ['crlf/eol-only', []],
     ['crlf/added-skip', [{ ruleId: 'TG004', path: JS_TEST, line: 9 }]],
   ])('%s', async (name, expected) => {

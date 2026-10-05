@@ -58,10 +58,14 @@ export class Repo {
     this.git('commit', '-q', '-m', message);
   }
 
-  async check(...args: string[]) {
+  check(...args: string[]) {
+    return this.run('check', ...args);
+  }
+
+  async run(...args: string[]) {
     let stdout = '';
     let stderr = '';
-    const code = await main(['check', ...args], {
+    const code = await main(args, {
       cwd: this.dir,
       stdout: (text) => {
         stdout += text;

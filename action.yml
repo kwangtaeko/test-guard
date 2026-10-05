@@ -1,0 +1,45 @@
+name: test-guard
+description: Fail pull requests that delete, skip or weaken tests.
+author: kwangtaeko
+branding:
+  icon: shield
+  color: red
+
+inputs:
+  base:
+    description: Branch or ref to compare against (HEAD is compared with its merge-base).
+    required: false
+    default: ${{ github.event.pull_request.base.ref }}
+  approve-label:
+    description: Pull request label that approves intentional test changes. Only humans should be able to add it.
+    required: false
+    default: test-guard:approved
+
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      env:
+        BASE: ${{ inputs.base }}
+        LABEL: ${{ inputs.approve-label }}
+        APPROVED: ${{ contains(github.event.pull_request.labels.*.name, inputs.approve-label) }}
+      run: |
+        if [ -z "$BASE" ]; then
+          echo "::error::test-guard: no base ref. Set the 'base' input or run on pull_request."
+          exit 2
+        fi
+        # actions/checkout only creates remote-tracking branches.
+        ref="$BASE"
+        if ! git rev-parse --verify --quiet "$ref^{commit}" > /dev/null; then
+          ref="origin/$BASE"
+        fi
+
+        code=0
+        node "$GITHUB_ACTION_PATH/dist/cli.js" check --base "$ref" --summary "$GITHUB_STEP_SUMMARY" || code=$?
+
+        if [ "$code" = 1 ] && [ "$APPROVED" = "true" ]; then
+          echo "::notice::test-guard: violations approved by the '$LABEL' label"
+          printf '\nApproved by the `%s` pull request label.\n' "$LABEL" >> "$GITHUB_STEP_SUMMARY"
+          exit 0
+        fi
+        exit "$code"

@@ -1,0 +1,2 @@
+[tool.pytest.ini_options]
+addopts = "-q --deselect tests/test_math.py::test_add"

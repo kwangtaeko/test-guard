@@ -1,7 +1,7 @@
-import { CONFIG_FILE, createDetector, parseConfig } from '../config.js';
+import { CONFIG_FILE, createContext, parseConfig } from '../config.js';
 import { RULE_IDS, type RuleId } from '../rules/index.js';
 import type { Finding } from '../types.js';
-import { compareFiles } from './compare.js';
+import { compareFiles, isWatched } from './compare.js';
 import {
   afterSpec,
   type CompareMode,
@@ -35,7 +35,7 @@ export function runCheck(options: CheckOptions): CheckResult {
   const config = parseConfig(
     base ? readBlobIfExists(root, `${base}:${CONFIG_FILE}`) : null,
   );
-  const detect = createDetector(config);
+  const ctx = createContext(config);
   const ruleIds = (options.rules ?? RULE_IDS).filter(
     (id) => config.rules[id] !== 'off',
   );
@@ -43,9 +43,9 @@ export function runCheck(options: CheckOptions): CheckResult {
   const worktree = mode.kind === 'worktree' ? createWorktreeIndex(root) : null;
   try {
     const env = worktree?.env;
-    // Only test files are analyzed, so other contents are never read.
+    // Unwatched files are never read.
     const read = (spec: string, path: string) =>
-      detect(path) ? readBlob(root, spec, env) : '';
+      isWatched(path, ctx) ? readBlob(root, spec, env) : '';
 
     const findings: Finding[] = [];
     for (const { beforePath, afterPath } of listChanges(
@@ -69,7 +69,7 @@ export function runCheck(options: CheckOptions): CheckResult {
             }
           : null,
       };
-      for (const finding of compareFiles(change, detect, ruleIds)) {
+      for (const finding of compareFiles(change, ctx, ruleIds)) {
         const level = config.rules[finding.ruleId];
         findings.push({
           ...finding,
@@ -87,7 +87,7 @@ export function runCheck(options: CheckOptions): CheckResult {
           (a.line ?? 0) - (b.line ?? 0) ||
           a.ruleId.localeCompare(b.ruleId),
       ),
-      filesScanned: listAfterFiles(root, mode, env).filter((p) => detect(p))
+      filesScanned: listAfterFiles(root, mode, env).filter((p) => ctx.detect(p))
         .length,
     };
   } finally {
