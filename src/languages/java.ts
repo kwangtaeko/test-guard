@@ -1,21 +1,12 @@
-import type { Counts } from './index.js';
-import { count, stripCLike } from './strip.js';
+import type { LanguageSpec } from './index.js';
+import { stripCLike } from './strip.js';
 
-// Annotations may be fully qualified (`@org.junit.Test`).
-const TESTS = /@(?:[\w$]+\.)*(?:Test|ParameterizedTest|RepeatedTest)\b/g;
-// A leading `.` is allowed: `Assertions.assertEquals(`.
-const ASSERTIONS = /(?<![\w$])(?:assert\w*|fail)\s*\(/g;
-const SKIPS =
-  /@(?:[\w$]+\.)*(?:Disabled\w*|Ignore)\b|(?<![\w$])assume\w*\s*\(/g;
-
-export function analyzeJava(source: string): Counts {
-  const code = stripCLike(source, {
-    templateLiterals: false,
-    textBlocks: true,
-  });
-  return {
-    tests: count(code, TESTS),
-    assertions: count(code, ASSERTIONS),
-    skips: count(code, SKIPS),
-  };
-}
+export const java: LanguageSpec = {
+  strip: (source) =>
+    stripCLike(source, { templateLiterals: false, textBlocks: true }),
+  // Annotations may be fully qualified (`@org.junit.Test`).
+  tests: /@(?:[\w$]+\.)*(?:Test|ParameterizedTest|RepeatedTest)\b/g,
+  // A leading `.` is allowed: `Assertions.assertEquals(`.
+  assertions: /(?<![\w$])(?:assert\w*|fail)\s*\(/g,
+  skips: /@(?:[\w$]+\.)*(?:Disabled\w*|Ignore)\b|(?<![\w$])assume\w*\s*\(/g,
+};

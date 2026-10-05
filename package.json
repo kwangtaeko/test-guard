@@ -4,11 +4,18 @@
   "description": "Detect and block AI coding agents from deleting, skipping or weakening tests.",
   "license": "MIT",
   "type": "module",
+  "bin": {
+    "test-guard": "dist/cli.js"
+  },
+  "files": [
+    "dist"
+  ],
   "engines": {
     "node": ">=20"
   },
   "packageManager": "pnpm@10.33.2",
   "scripts": {
+    "build": "tsup",
     "typecheck": "tsc --noEmit",
     "lint": "biome check .",
     "test": "vitest run"
@@ -17,10 +24,13 @@
     "@biomejs/biome": "^2.5.15",
     "@types/node": "^20.19.43",
     "@types/picomatch": "^4.0.3",
+    "tsup": "^8.5.1",
     "typescript": "^7.0.2",
     "vitest": "^4.1.11"
   },
   "dependencies": {
+    "commander": "^14.0.3",
+    "picocolors": "^1.1.1",
     "picomatch": "^4.0.7"
   }
 }
