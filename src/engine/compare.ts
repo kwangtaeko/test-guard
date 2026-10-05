@@ -20,6 +20,10 @@ export interface FileChange {
 export interface CompareContext {
   detect: TestFileDetector; // test files, config `exclude` already applied
   excluded(path: string): boolean; // config `exclude`
+  // Whether a directory ('' is the root) had files before the change. A new
+  // runner config in an existing directory is judged; in a new one (a new
+  // package) it is not. Without it, new configs are not judged.
+  dirExisted?(dir: string): boolean;
 }
 
 // Whether the engine needs the contents of this path.
@@ -56,6 +60,7 @@ function toRuleInput(
   const path = after?.path ?? before?.path ?? '';
   const beforeLines = before ? splitLines(before.content) : [];
   const afterLines = after ? splitLines(after.content) : [];
+  const runnerConfig = ctx.excluded(path) ? null : runnerConfigKind(path);
   return {
     before:
       before && beforeLang
@@ -70,11 +75,21 @@ function toRuleInput(
     beforeLines,
     afterLines,
     hunks: diffLines(beforeLines, afterLines),
-    runnerConfig: ctx.excluded(path) ? null : runnerConfigKind(path),
+    runnerConfig,
+    addedToExistingDir:
+      runnerConfig !== null &&
+      change.before === null &&
+      change.after !== null &&
+      ctx.dirExisted?.(parentDir(change.after.path)) === true,
     guardFile:
       guardFileKind(change.after?.path ?? '') ??
       guardFileKind(change.before?.path ?? ''),
   };
+}
+
+function parentDir(path: string): string {
+  const slash = path.lastIndexOf('/');
+  return slash === -1 ? '' : path.slice(0, slash);
 }
 
 function splitLines(content: string): string[] {

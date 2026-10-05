@@ -21,20 +21,34 @@ export const tg006: Rule = ({
     ];
   }
   if (guardFile === 'hook') {
-    const count = (lines: string[]) =>
-      lines.filter((line) => line.includes('test-guard')).length;
-    const before = count(beforeLines);
-    const after = count(afterLines);
-    if (after >= before) return [];
-    return [
-      {
+    const path = beforePath ?? afterPath ?? '';
+    const count = (lines: string[], test: (line: string) => boolean) =>
+      lines.filter(test).length;
+    const mentions = (line: string) => line.includes('test-guard');
+    // Claude Code: `"disableAllHooks": true` turns every hook off.
+    const disables = (line: string) =>
+      /"disableAllHooks"\s*:\s*true/.test(line);
+    const findings = [];
+    const before = count(beforeLines, mentions);
+    const after = count(afterLines, mentions);
+    if (after < before) {
+      findings.push({
         ruleId: 'TG006',
-        path: beforePath ?? afterPath ?? '',
+        path,
         message: `removed test-guard from hook config (lines ${before} → ${after})`,
         before,
         after,
-      },
-    ];
+      });
+    }
+    if (count(afterLines, disables) > count(beforeLines, disables)) {
+      findings.push({
+        ruleId: 'TG006',
+        path,
+        message:
+          'turned on `disableAllHooks`, which stops test-guard’s agent hooks',
+      });
+    }
+    return findings;
   }
   return [];
 };

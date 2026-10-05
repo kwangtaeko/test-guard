@@ -90,6 +90,11 @@ Violations fail the job and are listed in the job summary. A human can approve
 intentional changes with the `test-guard:approved` label (`approve-label`
 input). **Only give label permissions to people, never to an agent's token.**
 
+**Protect the gate.** A pull request runs its own copy of the workflow, so it
+could delete the test-guard step or add `continue-on-error`. In your branch
+protection rules, make `test-guard` a **required status check**, and protect
+`.github/workflows/` with [CODEOWNERS](https://docs.github.com/repositories/managing-your-repositorys-settings-and-features/customizing-your-repository/about-code-owners).
+
 ## Usage
 
 ### Check the working tree
@@ -267,6 +272,11 @@ repos:
   one file.
 - **In-shell edits** (`sed -i`, `node -e`, scripts) aren't visible before they
   run; they are caught at Stop, at commit and in CI.
+- **Tests that still look intact but no longer check anything** keep their
+  counts, so they aren't detected yet: an early `return`, assertions wrapped in
+  `try { … } catch {}`, a test inside `if (false)`, an empty `it.each([])`,
+  mocking the module under test, or changing expected values to match a bug.
+  These need syntax-aware analysis (planned).
 - **Not yet**: C#, Go, Rust, node:test option-style skips (`{ skip: true }`),
   other agents.
 

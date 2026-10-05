@@ -6,7 +6,7 @@ import {
 } from '../config.js';
 import { RULE_IDS, type RuleId } from '../rules/index.js';
 import type { Finding } from '../types.js';
-import { compareFiles, isWatched } from './compare.js';
+import { type CompareContext, compareFiles, isWatched } from './compare.js';
 import {
   afterSpec,
   type CompareMode,
@@ -14,6 +14,7 @@ import {
   findRoot,
   listAfterFiles,
   listChanges,
+  listTreeFiles,
   readBlob,
   readBlobIfExists,
   resolveBase,
@@ -41,7 +42,16 @@ export function runCheck(options: CheckOptions): CheckResult {
   const config = parseConfig(
     base ? readBlobIfExists(root, `${base}:${CONFIG_FILE}`) : null,
   );
-  const ctx = createContext(config);
+  let baseDirs: Set<string> | undefined;
+  const ctx: CompareContext = {
+    ...createContext(config),
+    // Only asked when a runner config is added, so the git call is rare.
+    dirExisted: (dir) => {
+      if (!base) return false;
+      baseDirs ??= parentDirs(listTreeFiles(root, base));
+      return baseDirs.has(dir);
+    },
+  };
   const ruleIds = activeRuleIds(config, options.rules);
 
   const worktree = mode.kind === 'worktree' ? createWorktreeIndex(root) : null;
@@ -106,4 +116,17 @@ export function activeRuleIds(
   rules: readonly RuleId[] = RULE_IDS,
 ): RuleId[] {
   return rules.filter((id) => config.rules[id] !== 'off');
+}
+
+function parentDirs(files: string[]): Set<string> {
+  const dirs = new Set<string>();
+  for (const file of files) {
+    let slash = file.lastIndexOf('/');
+    while (slash !== -1) {
+      dirs.add(file.slice(0, slash));
+      slash = file.lastIndexOf('/', slash - 1);
+    }
+    dirs.add('');
+  }
+  return dirs;
 }

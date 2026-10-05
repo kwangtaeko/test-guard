@@ -90,6 +90,10 @@ jobs:
 사람이 `test-guard:approved` 라벨(`approve-label` 입력으로 변경 가능)로 승인합니다.
 **라벨 권한은 사람에게만 주고, 에이전트용 토큰에는 절대 주지 마세요.**
 
+**관문을 보호하세요.** PR은 자기 쪽 워크플로 파일로 실행되므로, PR에서 test-guard 단계를 지우거나
+`continue-on-error`를 붙일 수 있습니다. 브랜치 보호 규칙에서 `test-guard`를 **필수 상태 검사**로
+지정하고, `.github/workflows/`를 [CODEOWNERS](https://docs.github.com/repositories/managing-your-repositorys-settings-and-features/customizing-your-repository/about-code-owners)로 보호하세요.
+
 ## 사용법
 
 ### 작업 트리 검사
@@ -260,6 +264,10 @@ repos:
   있습니다. 테스트를 다른 파일로 옮기면 원래 파일에서는 감소로 보고됩니다.
 - **셸 내부 편집**(`sed -i`, `node -e`, 스크립트)은 실행 전에 내용을 알 수 없어서, Stop·커밋·CI
   단계에서 잡힙니다.
+- **겉모양은 그대로인데 실제로는 아무것도 검사하지 않는 테스트**는 개수가 그대로라 아직 잡지
+  못합니다: 테스트 앞부분의 `return`, `try { … } catch {}`로 감싼 assertion, `if (false)` 안의
+  테스트, 빈 `it.each([])`, 테스트 대상 모듈을 mock으로 바꾸기, 버그에 맞춰 기대값 바꾸기.
+  문법을 이해하는 분석(계획 중)이 필요합니다.
 - **아직 지원하지 않음**: C#, Go, Rust, node:test의 옵션 형태 skip(`{ skip: true }`), 다른 에이전트.
 
 ## 라이선스

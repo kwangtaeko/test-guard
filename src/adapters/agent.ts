@@ -5,9 +5,10 @@
 // work is skipped only where it cannot change the result. File changes make
 // one git call per repository (the committed config); shell commands call git
 // only when they delete or move files or try to bypass test-guard.
-import { existsSync, statSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import picomatch from 'picomatch';
+import { findApproval } from '../approval.js';
 import {
   CONFIG_FILE,
   type Config,
@@ -20,6 +21,7 @@ import {
   compareFiles,
   isWatched,
 } from '../engine/compare.js';
+import { diffLines } from '../engine/diff.js';
 import { listWorktreeFiles, readBlobIfExists } from '../engine/git.js';
 import {
   blockStop,
@@ -29,10 +31,16 @@ import {
   parseHookInput,
   type StopInput,
 } from '../hook-io/common.js';
+import { toLf } from '../languages/index.js';
 import { normalizePath } from '../paths.js';
 import type { RuleId } from '../rules/index.js';
 import type { PatchedFile } from './apply-patch.js';
-import { type FileOp, fileOps, findBypass } from './shell.js';
+import {
+  commitMessageFiles,
+  type FileOp,
+  fileOps,
+  findBypass,
+} from './shell.js';
 
 export interface Violation {
   ruleId: string;
@@ -69,6 +77,10 @@ export function runHook(
 export function checkFileChange(change: PatchedFile): Violation[] {
   const anchor = change.afterPath ?? change.beforePath;
   if (!anchor) return [];
+  // Before the repository checks: settings outside the repository, such as
+  // ~/.claude/settings.json, can turn hooks off too.
+  const bypass = writtenBypass(change);
+  if (bypass.length > 0) return bypass;
   const root = findRepoRoot(dirname(anchor));
   if (!root) return [];
   const before = change.beforePath ? repoPath(root, change.beforePath) : null;
@@ -97,11 +109,51 @@ export function checkFileChange(change: PatchedFile): Violation[] {
   );
 }
 
+// Text written into a file that only serves to get around test-guard: a
+// script that commits with `--no-verify`, a commit message carrying an
+// approval trailer, settings that turn hooks off. Markdown is exempt, since
+// docs describe these. Only lines this change adds are looked at.
+const WRITTEN_BYPASS: [RegExp, string][] = [
+  [/--no-verify/, '`--no-verify`, which skips test-guard’s git hook'],
+  [/core\.hookspath/i, '`core.hooksPath`, which skips test-guard’s git hook'],
+  [/disableAllHooks/, '`disableAllHooks`, which turns off agent hooks'],
+  [
+    /^test-guard-approved\s*:/im,
+    'a `Test-Guard-Approved` trailer (only humans approve)',
+  ],
+];
+
+function writtenBypass(change: PatchedFile): Violation[] {
+  if (change.after === null || !change.afterPath) return [];
+  if (/\.mdx?$/i.test(change.afterPath)) return [];
+  const before = change.before === null ? [] : toLf(change.before).split('\n');
+  const after = toLf(change.after).split('\n');
+  const added = diffLines(before, after)
+    .flatMap((hunk) => hunk.added)
+    .map((line) => after[line - 1] ?? '')
+    .join('\n');
+  return WRITTEN_BYPASS.filter(([re]) => re.test(added)).map(([, what]) => ({
+    ruleId: 'TG006',
+    message: `writes ${what}`,
+    path: normalizePath(change.afterPath ?? ''),
+  }));
+}
+
 export function checkShell(command: string, cwd: string): Violation[] {
   const violations: Violation[] = findBypass(command).map((message) => ({
     ruleId: 'TG006',
     message,
   }));
+  // A trailer written into a file first, then `git commit -F file`.
+  for (const file of commitMessageFiles(command, cwd)) {
+    if (existsSync(file) && findApproval(readFileSync(file, 'utf8'))) {
+      violations.push({
+        ruleId: 'TG006',
+        message:
+          'commits a message with a `Test-Guard-Approved` trailer (only humans approve)',
+      });
+    }
+  }
   const ops = fileOps(command, cwd);
   if (violations.length === 0 && ops.length === 0) return [];
 
@@ -251,7 +303,17 @@ function loadContext(root: string): { config: Config; ctx: CompareContext } {
   let loaded = contexts.get(root);
   if (!loaded) {
     const config = parseConfig(readBlobIfExists(root, `HEAD:${CONFIG_FILE}`));
-    loaded = { config, ctx: createContext(config) };
+    loaded = {
+      config,
+      ctx: {
+        ...createContext(config),
+        // Before the tool runs, the disk is the "before" side.
+        dirExisted: (dir) => {
+          const path = join(root, dir);
+          return existsSync(path) && readdirSync(path).length > 0;
+        },
+      },
+    };
     contexts.set(root, loaded);
   }
   return loaded;
