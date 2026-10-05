@@ -8,6 +8,7 @@ import {
   parseHookInput,
   shellCommand,
 } from './claude-code.js';
+import { shellCommand as codexShell, patchText } from './codex.js';
 
 const pre = (tool_name: string, tool_input: object) =>
   parseHookInput(
@@ -87,10 +88,25 @@ describe('responses', () => {
   });
 });
 
-it('does not import test-guard logic', () => {
-  const source = readFileSync(
-    new URL('./claude-code.ts', import.meta.url),
-    'utf8',
-  );
-  expect(source).not.toMatch(/^import /m);
+it.each(['common.ts', 'claude-code.ts', 'codex.ts'])(
+  '%s imports nothing outside hook-io',
+  (file) => {
+    const source = readFileSync(new URL(`./${file}`, import.meta.url), 'utf8');
+    const imports = [...source.matchAll(/from '([^']+)'/g)].map((m) => m[1]);
+    expect(imports.every((path) => path === './common.js')).toBe(true);
+  },
+);
+
+describe('codex inputs', () => {
+  it('reads apply_patch and Bash', () => {
+    expect(patchText(pre('apply_patch', { command: '*** Begin Patch' }))).toBe(
+      '*** Begin Patch',
+    );
+    expect(patchText(pre('Bash', { command: 'ls' }))).toBeNull();
+    expect(codexShell(pre('Bash', { command: 'ls' }))).toBe('ls');
+    expect(codexShell(pre('Bash', { command: ['rm', 'a.test.js'] }))).toBe(
+      'rm a.test.js',
+    );
+    expect(codexShell(pre('PowerShell', { command: 'ls' }))).toBeNull();
+  });
 });
