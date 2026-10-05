@@ -1,10 +1,19 @@
 # test-guard
 
+<p>
+  <a href="https://www.npmjs.com/package/test-guard"><img src="https://img.shields.io/npm/v/test-guard.svg" alt="npm"></a>
+  <a href="https://github.com/kwangtaeko/test-guard/actions/workflows/ci.yml"><img src="https://github.com/kwangtaeko/test-guard/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/npm/l/test-guard.svg" alt="MIT"></a>
+</p>
+
 **AI 코딩 에이전트가 테스트를 지우거나, skip하거나, 약화해서 "통과"시키는 것을 막습니다.**
 
-[English](README.md)
+<img alt="Claude Code가 it.skip을 넣으려다 test-guard에 막히고, 대신 버그를 고치는 장면" src="https://raw.githubusercontent.com/kwangtaeko/test-guard/main/docs/assets/hero.gif" width="800" />
 
-<!-- 데모 GIF: 에이전트가 `it.skip`을 넣으려다 차단되고, 대신 구현을 고치는 과정 -->
+<sub>[데모 프로젝트](examples/demo)에서 실제 Claude Code 세션을 2배속으로 재생한 것입니다.
+<a href="https://github.com/charmbracelet/vhs">VHS</a>로 <a href="docs/tapes">이 테이프</a>에서 녹화했습니다.</sub>
+
+[English](README.md)
 
 코딩 에이전트는 실패하는 테스트를 만나면 테스트를 지우거나, `.skip`을 붙이거나,
 assertion을 빼거나, 테스트 실행 대상에서 제외해서 "고치는" 경우가 있습니다.
@@ -19,14 +28,32 @@ assertion을 빼거나, 테스트 실행 대상에서 제외해서 "고치는" �
 
 LLM 호출, 네트워크, 텔레메트리 없음. 같은 입력이면 같은 결과입니다.
 
-## 빠른 시작
+## 설치
 
 ```sh
+# npm
 npm install --save-dev test-guard
-npx test-guard install --pre-commit            # git commit-msg 훅
-npx test-guard install --agent claude-code     # 또는: --agent codex
-npx test-guard check                           # 지금 작업 트리 검사
+
+# pnpm
+pnpm add --save-dev test-guard
+
+# yarn
+yarn add --dev test-guard
 ```
+
+Node.js 20 이상과 git이 필요합니다. 패키지는 런타임 의존성이 없는 단일 파일입니다.
+
+## 설정
+
+```sh
+npx test-guard install --agent claude-code     # 또는: --agent codex
+npx test-guard install --pre-commit            # git commit-msg 훅
+```
+
+`install --agent`는 에이전트 설정에 추가할 내용을 보여주고, 기록하기 전에 확인을 받습니다
+(`--yes`로 생략).
+
+<img alt="install --agent claude-code가 diff를 보여주고 확인 후 .claude/settings.json을 쓰고, install --pre-commit이 commit-msg 훅을 설치하는 장면" src="https://raw.githubusercontent.com/kwangtaeko/test-guard/main/docs/assets/install.gif" width="800" />
 
 [데모 프로젝트](examples/demo)에서 바로 해볼 수 있습니다. 실패하는 테스트 1개, 버그 1개가 들어 있습니다.
 
@@ -62,6 +89,30 @@ jobs:
 위반이 있으면 job이 실패하고 Job Summary에 목록이 표시됩니다. 의도적인 변경은
 사람이 `test-guard:approved` 라벨(`approve-label` 입력으로 변경 가능)로 승인합니다.
 **라벨 권한은 사람에게만 주고, 에이전트용 토큰에는 절대 주지 마세요.**
+
+## 사용법
+
+### 작업 트리 검사
+
+`test-guard check`는 변경 내용을 HEAD와 비교해 약화된 테스트를 모두 보여줍니다.
+에이전트 작업이 끝난 뒤나 push 전에 실행하세요.
+
+```sh
+npx test-guard check
+```
+
+<img alt="test-guard check가 assertion 삭제(TG003), matcher 약화(TG007), it.skip 추가(TG004)를 보고하는 장면" src="https://raw.githubusercontent.com/kwangtaeko/test-guard/main/docs/assets/check.gif" width="800" />
+
+### 약화 커밋 차단
+
+commit-msg 훅을 설치하면 테스트를 약화하는 커밋은 실패합니다. 의도적인 변경이면 사람이
+`Test-Guard-Approved:` 트레일러에 사유를 적어 커밋하면 통과합니다.
+
+```sh
+git commit -m "test: skip flaky subtraction" -m "Test-Guard-Approved: tracked in #42"
+```
+
+<img alt="it.skip을 추가한 커밋은 막히고, Test-Guard-Approved 트레일러를 넣은 같은 커밋은 통과하는 장면" src="https://raw.githubusercontent.com/kwangtaeko/test-guard/main/docs/assets/commit.gif" width="800" />
 
 ## 규칙
 
