@@ -1,6 +1,6 @@
 name: test-guard
 description: Fail pull requests that delete, skip or weaken tests.
-author: kwangtaeko
+author: tonygwangsk
 branding:
   icon: shield
   color: red
