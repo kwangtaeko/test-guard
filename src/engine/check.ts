@@ -1,4 +1,9 @@
-import { CONFIG_FILE, createContext, parseConfig } from '../config.js';
+import {
+  CONFIG_FILE,
+  type Config,
+  createContext,
+  parseConfig,
+} from '../config.js';
 import { RULE_IDS, type RuleId } from '../rules/index.js';
 import type { Finding } from '../types.js';
 import { compareFiles, isWatched } from './compare.js';
@@ -18,6 +23,7 @@ export interface CheckOptions {
   cwd: string;
   mode: CompareMode;
   rules?: readonly RuleId[];
+  countFiles?: boolean; // filesScanned costs a git call; hooks skip it
 }
 
 export interface CheckResult {
@@ -36,9 +42,7 @@ export function runCheck(options: CheckOptions): CheckResult {
     base ? readBlobIfExists(root, `${base}:${CONFIG_FILE}`) : null,
   );
   const ctx = createContext(config);
-  const ruleIds = (options.rules ?? RULE_IDS).filter(
-    (id) => config.rules[id] !== 'off',
-  );
+  const ruleIds = activeRuleIds(config, options.rules);
 
   const worktree = mode.kind === 'worktree' ? createWorktreeIndex(root) : null;
   try {
@@ -87,10 +91,19 @@ export function runCheck(options: CheckOptions): CheckResult {
           (a.line ?? 0) - (b.line ?? 0) ||
           a.ruleId.localeCompare(b.ruleId),
       ),
-      filesScanned: listAfterFiles(root, mode, env).filter((p) => ctx.detect(p))
-        .length,
+      filesScanned:
+        options.countFiles === false
+          ? 0
+          : listAfterFiles(root, mode, env).filter((p) => ctx.detect(p)).length,
     };
   } finally {
     worktree?.dispose();
   }
+}
+
+export function activeRuleIds(
+  config: Config,
+  rules: readonly RuleId[] = RULE_IDS,
+): RuleId[] {
+  return rules.filter((id) => config.rules[id] !== 'off');
 }

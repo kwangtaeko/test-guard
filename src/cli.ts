@@ -1,5 +1,10 @@
-import { appendFileSync, readFileSync } from 'node:fs';
-import { resolve } from 'node:path';
+import {
+  appendFileSync,
+  mkdirSync,
+  readFileSync,
+  writeFileSync,
+} from 'node:fs';
+import { dirname, resolve } from 'node:path';
 import {
   Command,
   CommanderError,
@@ -8,10 +13,13 @@ import {
 } from 'commander';
 import { createColors } from 'picocolors';
 import pkg from '../package.json' with { type: 'json' };
+import { runClaudeCodeHook } from './adapters/claude-code.js';
 import { findApproval } from './approval.js';
 import { runCheck } from './engine/check.js';
-import type { CompareMode } from './engine/git.js';
-import { installGitHook } from './install/git-hook.js';
+import { type CompareMode, findRoot } from './engine/git.js';
+import { notifyUser } from './hook-io/claude-code.js';
+import { formatDiff, planClaudeCodeSettings } from './install/claude-code.js';
+import { InstallError, installGitHook } from './install/git-hook.js';
 import {
   formatJson,
   formatMarkdown,
@@ -25,6 +33,8 @@ export interface Io {
   stdout(text: string): void;
   stderr(text: string): void;
   color?: boolean;
+  readStdin?(): Promise<string>;
+  confirm?(question: string): Promise<boolean>; // absent when not interactive
 }
 
 interface CheckFlags {
@@ -73,19 +83,34 @@ export async function main(argv: string[], io: Io): Promise<number> {
 
   program
     .command('install')
-    .description('install git hooks')
+    .description('install git hooks or agent hooks')
     .option(
       '--pre-commit',
       'run `check --staged` on every commit (installed as a commit-msg hook)',
     )
-    .action((flags: { preCommit?: boolean }) => {
-      exitCode = install(flags, io);
+    .option('--agent <name>', 'add agent hooks to its settings (claude-code)')
+    .option('-y, --yes', 'write agent settings without asking')
+    .action(async (flags: InstallFlags) => {
+      exitCode = await install(flags, io);
+    });
+
+  program
+    .command('hook')
+    .description('run as an agent hook (hook JSON on stdin)')
+    .argument('<agent>', 'claude-code')
+    .argument('<event>', 'pre-tool-use | stop')
+    .action(async (agent: string, event: string) => {
+      exitCode = await hook(agent, event, io);
     });
 
   try {
     await program.parseAsync(argv, { from: 'user' });
   } catch (error) {
-    if (error instanceof CommanderError) return error.exitCode === 0 ? 0 : 2;
+    if (error instanceof CommanderError) {
+      if (error.exitCode === 0) return 0;
+      // Exit 2 would block the agent's tool call; a misconfigured hook must not.
+      return argv[0] === 'hook' ? 1 : 2;
+    }
     throw error;
   }
   return exitCode;
@@ -126,20 +151,64 @@ function check(flags: CheckFlags, io: Io): number {
   }
 }
 
-function install(flags: { preCommit?: boolean }, io: Io): number {
-  if (!flags.preCommit) {
-    io.stderr('test-guard: nothing to install (use --pre-commit)\n');
+interface InstallFlags {
+  preCommit?: boolean;
+  agent?: string;
+  yes?: boolean;
+}
+
+async function install(flags: InstallFlags, io: Io): Promise<number> {
+  if (!flags.preCommit && flags.agent === undefined) {
+    io.stderr(
+      'test-guard: nothing to install (use --pre-commit or --agent claude-code)\n',
+    );
     return 2;
   }
   try {
-    const { path, updated } = installGitHook(io.cwd);
-    io.stdout(
-      `${updated ? 'Updated' : 'Installed'} commit-msg hook: ${path}\n`,
-    );
+    if (flags.preCommit) {
+      const { path, updated } = installGitHook(io.cwd);
+      io.stdout(
+        `${updated ? 'Updated' : 'Installed'} commit-msg hook: ${path}\n`,
+      );
+    }
+    if (flags.agent !== undefined) {
+      if (flags.agent !== 'claude-code') {
+        throw new InstallError(
+          `unsupported agent: ${flags.agent} (supported: claude-code)`,
+        );
+      }
+      const plan = planClaudeCodeSettings(findRoot(io.cwd));
+      if (!plan.changed) {
+        io.stdout(`test-guard hooks are already in ${plan.path}\n`);
+        return 0;
+      }
+      io.stdout(`${plan.path}\n${formatDiff(plan.before, plan.after)}`);
+      const ok =
+        flags.yes ||
+        ((await io.confirm?.('Write these changes? [y/N] ')) ?? false);
+      if (!ok) {
+        io.stdout('Not written. Re-run with --yes to write without asking.\n');
+        return 1;
+      }
+      mkdirSync(dirname(plan.path), { recursive: true });
+      writeFileSync(plan.path, plan.after);
+      io.stdout(`Written: ${plan.path}\n`);
+    }
     return 0;
   } catch (error) {
     return fail(error, io);
   }
+}
+
+// Agent hooks answer through stdout JSON and always exit 0; errors are
+// reported to the user rather than blocking the agent.
+async function hook(agent: string, event: string, io: Io): Promise<number> {
+  if (agent !== 'claude-code' || !['pre-tool-use', 'stop'].includes(event)) {
+    io.stdout(notifyUser(`test-guard: unsupported hook "${agent} ${event}"`));
+    return 0;
+  }
+  io.stdout(runClaudeCodeHook((await io.readStdin?.()) ?? ''));
+  return 0;
 }
 
 function fail(error: unknown, io: Io): number {
