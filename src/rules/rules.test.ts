@@ -3,10 +3,10 @@ import { compareFiles, type FileChange } from '../engine/compare.js';
 import { createTestFileMatcher } from '../paths.js';
 import { RULE_IDS } from './index.js';
 
-const detect = createTestFileMatcher();
+const ctx = { detect: createTestFileMatcher(), excluded: () => false };
 
 function check(change: FileChange) {
-  return compareFiles(change, detect, RULE_IDS).map(
+  return compareFiles(change, ctx, RULE_IDS).map(
     ({ ruleId, line, message }) => ({ ruleId, line, message }),
   );
 }
@@ -248,6 +248,205 @@ describe('TG007', () => {
           'expect(f()).toBe(4);',
         ),
       }),
+    ).toEqual([]);
+  });
+});
+
+describe('TG005', () => {
+  const change = (path: string, from: string[], to: string[]) =>
+    check({ before: file(path, ...from), after: file(path, ...to) });
+
+  it.each([
+    [
+      'package.json',
+      ['{', '  "scripts": { "test": "jest" }', '}'],
+      ['{', '  "scripts": { "test": "jest --passWithNoTests" }', '}'],
+      'added `passWithNoTests` to "test" script',
+    ],
+    [
+      'packages/api/package.json',
+      ['{', '  "scripts": {', '    "test": "vitest run"', '  }', '}'],
+      ['{', '  "scripts": {', '    "test": "vitest run src/ok"', '  }', '}'],
+      'changed "test" script',
+    ],
+    [
+      'jest.config.js',
+      ['module.exports = {};'],
+      ["module.exports = { testPathIgnorePatterns: ['user'] };"],
+      'added `testPathIgnorePatterns`',
+    ],
+    [
+      'vitest.config.ts',
+      ['export default {', '  test: {},', '};'],
+      ['export default {', "  test: { exclude: ['**/user*'] },", '};'],
+      'added `exclude`',
+    ],
+    [
+      '.mocharc.yml',
+      ['spec: test/**/*.js'],
+      ['spec: test/**/*.js', 'grep: fast'],
+      'added `grep`',
+    ],
+    [
+      'pyproject.toml',
+      ['[tool.pytest.ini_options]', 'addopts = "-q"'],
+      [
+        '[tool.pytest.ini_options]',
+        'addopts = "-q --deselect tests/test_a.py::test_x"',
+      ],
+      'added `--deselect`',
+    ],
+    [
+      'pytest.ini',
+      ['[pytest]', 'addopts = -q'],
+      ['[pytest]', 'addopts = -q -k "not slow"'],
+      'added `-k`',
+    ],
+    [
+      'tests/conftest.py',
+      ['import pytest'],
+      ['import pytest', 'collect_ignore = ["test_user.py"]'],
+      'added `collect_ignore`',
+    ],
+    [
+      'conftest.py',
+      ['import pytest'],
+      ['import pytest', 'def pytest_collection_modifyitems(items):'],
+      'added `pytest_collection_modifyitems`',
+    ],
+    [
+      'pom.xml',
+      ['<properties>', '</properties>'],
+      ['<properties>', '  <skipTests>true</skipTests>', '</properties>'],
+      'added `skipTests`',
+    ],
+    [
+      'pom.xml',
+      ['<configuration>', '</configuration>'],
+      [
+        '<configuration>',
+        '  <testFailureIgnore>true</testFailureIgnore>',
+        '</configuration>',
+      ],
+      'added `testFailureIgnore`',
+    ],
+    [
+      'build.gradle',
+      ['test {', '}'],
+      ['test {', '  enabled = false', '}'],
+      'added `enabled = false`',
+    ],
+    [
+      'app/build.gradle.kts',
+      ['tasks.test {', '}'],
+      ['tasks.test {', '  ignoreFailures = true', '}'],
+      'added `ignoreFailures`',
+    ],
+  ])('%s: reports %s', (path, from, to, message) => {
+    expect(change(path, from, to)).toEqual([
+      { ruleId: 'TG005', line: expect.any(Number), message },
+    ]);
+  });
+
+  it.each([
+    [
+      'package.json',
+      ['{', '  "version": "1.0.0"', '}'],
+      ['{', '  "version": "1.1.0"', '}'],
+    ],
+    [
+      'build.gradle',
+      ['dependencies {', '}'],
+      [
+        'dependencies {',
+        "  implementation('a:b:1') { exclude group: 'c' }",
+        '}',
+      ],
+    ],
+    ['pyproject.toml', ['[tool.ruff]'], ['[tool.ruff]', 'ignore = ["E501"]']],
+  ])('%s: accepts unrelated changes', (path, from, to) => {
+    expect(change(path, from, to)).toEqual([]);
+  });
+
+  it('ignores new config files', () => {
+    expect(
+      check({ before: null, after: file('pkg/jest.config.js', 'testMatch') }),
+    ).toEqual([]);
+  });
+
+  it('honors config exclude', () => {
+    const excluded = compareFiles(
+      {
+        before: file('vendor/pom.xml', '<a/>'),
+        after: file('vendor/pom.xml', '<skipTests>true</skipTests>'),
+      },
+      { detect: ctx.detect, excluded: (p) => p.startsWith('vendor/') },
+      RULE_IDS,
+    );
+    expect(excluded).toEqual([]);
+  });
+});
+
+describe('TG006', () => {
+  it.each([
+    [null, '{}', 'added'],
+    ['{}', '{ "exclude": ["src/**"] }', 'changed'],
+    ['{}', null, 'deleted'],
+  ])('reports config %s → %s', (from, to, what) => {
+    expect(
+      check({
+        before: from === null ? null : file('.test-guard.json', from),
+        after: to === null ? null : file('.test-guard.json', to),
+      }),
+    ).toEqual([
+      {
+        ruleId: 'TG006',
+        line: undefined,
+        message: `${what} test-guard config (needs human approval)`,
+      },
+    ]);
+  });
+
+  it.each([
+    [
+      '.husky/pre-commit',
+      ['npx test-guard check --staged', 'npm test'],
+      ['npm test'],
+    ],
+    ['.github/workflows/ci.yml', ['- uses: kwangtaeko/test-guard@v0'], []],
+    [
+      '.claude/settings.json',
+      ['"command": "test-guard hook claude-code pre-tool-use"'],
+      ['"command": "true"'],
+    ],
+    ['lefthook.yml', ['run: test-guard check --staged'], ['run: echo ok']],
+  ])('reports test-guard removed from %s', (path, from, to) => {
+    expect(
+      check({ before: file(path, ...from), after: file(path, ...to) }),
+    ).toMatchObject([{ ruleId: 'TG006' }]);
+  });
+
+  it('reports a deleted hook file that ran test-guard', () => {
+    expect(
+      check({
+        before: file('.husky/pre-commit', 'npx test-guard check'),
+        after: null,
+      }),
+    ).toMatchObject([{ ruleId: 'TG006' }]);
+  });
+
+  it.each([
+    [
+      '.husky/pre-commit',
+      ['npx test-guard check'],
+      ['npx test-guard check --staged'],
+    ],
+    ['.husky/pre-commit', ['npm test'], ['npm run lint']],
+    ['fixtures/x/.test-guard.json', ['{}'], ['{"rules":{}}']],
+    ['docs/.husky/pre-commit', ['test-guard'], []],
+  ])('accepts %s', (path, from, to) => {
+    expect(
+      check({ before: file(path, ...from), after: file(path, ...to) }),
     ).toEqual([]);
   });
 });

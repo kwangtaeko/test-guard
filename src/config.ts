@@ -1,9 +1,9 @@
 import picomatch from 'picomatch';
+import type { CompareContext } from './engine/compare.js';
 import {
   createTestFileMatcher,
   DEFAULT_TEST_PATTERNS,
   normalizePath,
-  type TestFileDetector,
 } from './paths.js';
 import type { Language, Severity } from './types.js';
 
@@ -70,7 +70,7 @@ export function parseConfig(text: string | null): Config {
   return config;
 }
 
-export function createDetector(config: Config): TestFileDetector {
+export function createContext(config: Config): CompareContext {
   const patterns = {} as Record<Language, string[]>;
   for (const language of LANGUAGES) {
     patterns[language] = config.languages.includes(language)
@@ -81,13 +81,14 @@ export function createDetector(config: Config): TestFileDetector {
       : [];
   }
   const match = createTestFileMatcher(patterns);
-  const excluded =
+  const isExcluded =
     config.exclude.length > 0
       ? picomatch(config.exclude, { dot: true })
       : () => false;
-  return (path) => {
-    const normalized = normalizePath(path);
-    return excluded(normalized) ? null : match(normalized);
+  const excluded = (path: string) => isExcluded(normalizePath(path));
+  return {
+    detect: (path) => (excluded(path) ? null : match(normalizePath(path))),
+    excluded,
   };
 }
 

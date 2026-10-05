@@ -61,6 +61,12 @@ export function resolveBase(root: string, mode: CompareMode): string | null {
   }
 }
 
+// Absolute path of a file in the git dir, honoring relocations such as
+// GIT_INDEX_FILE and core.hooksPath.
+export function gitPath(root: string, name: string): string {
+  return resolve(root, git(root, ['rev-parse', '--git-path', name]).trim());
+}
+
 // Worktree mode stages everything into a throwaway index, so renames and
 // untracked files are seen exactly as `git add -A` would see them. The real
 // index is never touched.
@@ -68,10 +74,7 @@ export function createWorktreeIndex(root: string): {
   env: Env;
   dispose(): void;
 } {
-  const indexPath = resolve(
-    root,
-    git(root, ['rev-parse', '--git-path', 'index']).trim(),
-  );
+  const indexPath = gitPath(root, 'index');
   const dir = mkdtempSync(join(tmpdir(), 'test-guard-'));
   const tempIndex = join(dir, 'index');
   try {

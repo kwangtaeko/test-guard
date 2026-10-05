@@ -1,0 +1,2 @@
+npx test-guard check --staged
+npm test
