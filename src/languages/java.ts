@@ -7,7 +7,8 @@ import { blankSwallowedBraces, reportsFailure } from './swallowed.js';
 const ASSERT_METHODS =
   'assertEquals|assertNotEquals|assertTrue|assertFalse|assertNull|assertNotNull|assertSame|assertNotSame|assertThrows|assertThrowsExactly|assertArrayEquals|assertThat|assertAll|assertDoesNotThrow|assertIterableEquals|assertLinesMatch|assertTimeout|assertTimeoutPreemptively|assertInstanceOf|fail';
 const TEST_ANNOTATIONS = 'Test|ParameterizedTest|RepeatedTest';
-const TRUSTED_PACKAGES = 'org\\.junit\\.|org\\.testng\\.';
+// `junit.framework` is JUnit 3.
+const TRUSTED_PACKAGES = 'org\\.junit\\.|org\\.testng\\.|junit\\.';
 const ASSERTION_LIBRARIES =
   'org\\.hamcrest\\.|org\\.assertj\\.|com\\.google\\.common\\.truth\\.|org\\.springframework\\.';
 

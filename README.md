@@ -261,6 +261,33 @@ repos:
         always_run: true
 ```
 
+## False positives on real history
+
+`scripts/fp-history.mjs` runs `test-guard check` on each commit of a
+repository against its parent. On the last 300 commits of four projects
+(2026-10-06):
+
+| Repository | Stack | Commits stopped | Didn't weaken anything |
+|---|---|---|---|
+| expressjs/express | JS, Mocha | 1 (0.3%) | 1 |
+| pallets/flask | Python, pytest | 3 (1.0%) | 0 |
+| google/gson | Java, JUnit | 13 (4.3%) | 5 |
+| colinhacks/zod | TS, Vitest | 11 (3.7%) | 2 |
+| **Total** | | **28 / 1,200 (2.3%)** | **8 (0.7%)** |
+
+20 of the 28 really removed, skipped or weakened tests (a feature dropped, a
+test marked `@Ignore` or `skipif`, `assertThrows(Specific.class)` loosened
+on purpose); people make these changes too, and they pass with one approval.
+The other 8 didn't weaken anything: assertions merged into one, `try/fail`
+moved to `assertThrows`, a test replaced by a new file, a wrapper added to the
+`test` script. None was a wrong reading of the code. To reproduce:
+
+```bash
+pnpm build
+git clone https://github.com/pallets/flask /tmp/flask
+node scripts/fp-history.mjs /tmp/flask --commits 300
+```
+
 ## What it can't do
 
 - **It is a guardrail, not a sandbox.** Hooks stop the obvious shortcuts. An

@@ -68,7 +68,8 @@ const SPECS: Record<Language, Spec> = {
       },
       {
         // A line ending in `(` continues (Black's multi-line `assert (`).
-        re: /(?<![\w.])assert(?=[\s(])(?!.*(?:==|!=|<|>|\bin\b))(?!.*\(\s*$)/,
+        // `is` (but not `is not`) is as exact as `==`.
+        re: /(?<![\w.])assert(?=[\s(])(?!.*(?:==|!=|<|>|\bin\b|\bis\b(?!\s+not\b)))(?!.*\(\s*$)/,
         group: 'value',
         label: 'assert x',
       },

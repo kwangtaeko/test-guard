@@ -15,6 +15,16 @@
   filter (`-k`, `-t`, `--testNamePattern`, `--testPathPattern`, `-run`,
   `-DskipTests`, `-x test`, …); a test command removed from a workflow (the
   step deleted or replaced, the file deleted or renamed away).
+- Fewer false positives found on 1,200 real commits (express, flask, gson,
+  zod): runner names in CI matrix values (`mocha@8`, `tox:`), Maven
+  `<skip>` outside surefire/failsafe, flags on new CI steps or jobs (only a
+  step that already ran tests is judged), `assert type(x) is y`, JUnit 3
+  `junit.framework` imports, a helper named `describe` in a file that never
+  calls `describe('…')`, `coverage run -p -m pytest`, `nub`/`make`/`turbo`
+  `test`.
+- `scripts/fp-history.mjs` measures this on any repository; results in the
+  README.
+- Shell analysis: `\` in PowerShell cmdlet paths on Linux and macOS.
 - `prepublishOnly` builds before `npm publish`.
 
 ## 0.1.1 - 2026-10-06

@@ -9,7 +9,6 @@ const MODIFIERS =
 const BUILTIN_MATCHERS =
   'toBe|toEqual|toStrictEqual|toThrow|toThrowError|toHaveLength|toBeTruthy|toBeFalsy|toBeDefined|toBeUndefined|toBeNull|toBeNaN|toContain|toContainEqual|toMatch|toMatchObject|toHaveProperty|toBeCloseTo|toBeGreaterThan|toBeGreaterThanOrEqual|toBeLessThan|toBeLessThanOrEqual|toBeInstanceOf|toHaveBeenCalled|toHaveBeenCalledWith|toHaveBeenCalledTimes|toHaveBeenLastCalledWith|toHaveBeenNthCalledWith|toHaveReturned|toHaveReturnedWith|toMatchSnapshot|toMatchInlineSnapshot|toThrowErrorMatchingSnapshot|toThrowErrorMatchingInlineSnapshot';
 
-const RUNNER_NAMES = 'it|test|describe|expect';
 const STRING = '\'[^\'\\n]*\'|"[^"\\n]*"|`[^`]*`';
 
 const SKIPS = [
@@ -20,12 +19,24 @@ const SKIPS = [
   // Skipping from inside a test: Mocha `this.skip()`, node:test `t.skip()`,
   // Vitest `ctx.skip()`.
   '(?<![\\w$.])(?:this|t|ctx|context)\\.(?:skip|todo)\\s*\\(',
-  // Test functions replaced in the file.
-  `(?<![\\w$.])function\\*?\\s+(?:${RUNNER_NAMES})\\s*\\(`,
-  `(?<![\\w$.])(?:const|let|var)\\s+(?:${RUNNER_NAMES})\\s*=\\s*(?:async\\s*)?(?:function\\b|\\([^()]*\\)\\s*=>|[\\w$]+\\s*=>)`,
-  `(?<![\\w$])(?:globalThis|global|window|self)\\.(?:${RUNNER_NAMES})\\s*=(?!=)`,
-  `^[ \\t]*(?:${RUNNER_NAMES})\\s*=(?![=>])`,
 ];
+
+// Test functions replaced in the file.
+const redefinitions = (names: string) => [
+  `(?<![\\w$.])function\\*?\\s+(?:${names})\\s*\\(`,
+  `(?<![\\w$.])(?:const|let|var)\\s+(?:${names})\\s*=\\s*(?:async\\s*)?(?:function\\b|\\([^()]*\\)\\s*=>|[\\w$]+\\s*=>)`,
+  `(?<![\\w$])(?:globalThis|global|window|self)\\.(?:${names})\\s*=(?!=)`,
+  `^[ \\t]*(?:${names})\\s*=(?![=>])`,
+];
+
+// `expect`, and the runner functions the file calls with a title: a helper
+// named `describe(value)` in a file that never calls `describe('…')` is fine.
+function runnerNames(code: string): string {
+  const titled = ['it', 'test', 'describe'].filter((name) =>
+    new RegExp(`(?<![\\w$.])${name}(?:\\.\\w+)*\\s*\\(\\s*['"\`]`).test(code),
+  );
+  return ['expect', ...titled].join('|');
+}
 
 // First parameters of callbacks passed to `it(…)` / `test(…)`.
 function contextNames(code: string): string[] {
@@ -63,7 +74,7 @@ export const js: LanguageSpec = {
         ),
     ),
   skips: (code) => {
-    const patterns = [...SKIPS];
+    const patterns = [...SKIPS, ...redefinitions(runnerNames(code))];
     // The test callback's context under any name: `(c) => { c.skip() }`.
     const names = contextNames(code);
     if (names.length > 0) {

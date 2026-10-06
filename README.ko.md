@@ -255,6 +255,31 @@ repos:
         always_run: true
 ```
 
+## 실제 이력에서의 오탐
+
+`scripts/fp-history.mjs`는 저장소의 커밋마다 부모 커밋과 비교해 `test-guard check`를 돌립니다.
+네 프로젝트의 최근 커밋 300개씩에 돌린 결과입니다 (2026-10-06):
+
+| 저장소 | 스택 | 막힌 커밋 | 실제로는 약화가 아닌 것 |
+|---|---|---|---|
+| expressjs/express | JS, Mocha | 1 (0.3%) | 1 |
+| pallets/flask | Python, pytest | 3 (1.0%) | 0 |
+| google/gson | Java, JUnit | 13 (4.3%) | 5 |
+| colinhacks/zod | TS, Vitest | 11 (3.7%) | 2 |
+| **합계** | | **28 / 1,200 (2.3%)** | **8 (0.7%)** |
+
+28개 중 20개는 실제로 테스트를 지우거나 skip하거나 약화한 커밋입니다(기능 제거, `@Ignore`·`skipif`
+추가, 의도적으로 느슨하게 바꾼 `assertThrows(Specific.class)` 등). 사람도 이런 변경을 하며, 한 번
+승인하면 통과합니다. 나머지 8개는 약화가 아니었습니다: 여러 assertion을 하나로 합침, `try/fail`을
+`assertThrows`로 바꿈, 테스트를 새 파일로 대체, `test` 스크립트에 래퍼 추가. 코드를 잘못 읽은 경우는
+없었습니다. 재현:
+
+```bash
+pnpm build
+git clone https://github.com/pallets/flask /tmp/flask
+node scripts/fp-history.mjs /tmp/flask --commits 300
+```
+
 ## 할 수 없는 것
 
 - **샌드박스가 아니라 가드레일입니다.** 훅은 명백한 지름길을 막습니다. 셸 권한을 가진 에이전트가
