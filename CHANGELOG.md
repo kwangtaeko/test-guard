@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.1.1 - 2026-10-05
+## 0.1.1 - 2026-10-06
 
 Hardening after a red-team review: each of these got past 0.1.0.
 
