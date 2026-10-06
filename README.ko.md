@@ -124,9 +124,9 @@ git commit -m "test: skip flaky subtraction" -m "Test-Guard-Approved: tracked in
 |---|---|
 | TG001 | 테스트 파일 삭제, 또는 테스트가 아닌 경로로 이동 (pytest가 건너뛰는 `build/`, `dist/`, `.*`, `venv/` 같은 폴더 포함) |
 | TG002 | 파일의 테스트 케이스 수 감소 (Python: pytest/unittest가 실제로 수집하는 테스트만, 같은 이름을 두 번 정의하면 하나로 계산; Java: `@Nested`가 빠진 내부 클래스의 테스트) |
-| TG003 | 파일의 assertion 수 감소 |
+| TG003 | 파일의 assertion 수 감소 (실패를 무시하는 `catch`/`except`가 감싼 `try` 안의 assertion은 세지 않음) |
 | TG004 | skip / disable / focus 추가: `it.skip`, `xit`, `.only`, `.todo`, `test.failing`, `{ skip: true }`, `this.skip()`, `@pytest.mark.skip`(import 별칭 포함), `xfail`, `__test__ = False`, `@Disabled`, `@Ignore`, `Assumptions.abort()`, TestNG `enabled = false` 등 — 그리고 파일 안에서 테스트·assertion 함수를 바꿔치기한 경우(`const expect = …`, 기본 matcher를 덮어쓰는 `expect.extend`, 로컬 `assertEquals`, JUnit이 아닌 `Test` 어노테이션) |
-| TG005 | 테스트 러너 설정 변조: `passWithNoTests`, `testPathIgnorePatterns`, `setupFiles`/`globalSetup`, pytest `addopts`의 `-k`/`--deselect`/`--ignore`, `collect_ignore`, `conftest.py`의 `pytest_*` 훅, Maven `skipTests`/`testFailureIgnore`/`groups`/`includes`, Gradle `enabled = false`/`ignoreFailures`/`excludeTags` 등 |
+| TG005 | 테스트 러너 설정 변조: `passWithNoTests`, `testPathIgnorePatterns`, `setupFiles`/`globalSetup`, pytest `addopts`의 `-k`/`--deselect`/`--ignore`, `collect_ignore`, `conftest.py`의 `pytest_*` 훅, Maven `skipTests`/`testFailureIgnore`/`groups`/`includes`, Gradle `enabled = false`/`ignoreFailures`/`excludeTags`, GitHub Actions 테스트 스텝에 붙인 `\|\| true`·`set +e`·`continue-on-error`·`if:`·`-u`·테스트 필터, CI에서 테스트 명령 삭제 등 |
 | TG006 | test-guard 우회: `.test-guard.json` 변경; 훅·CI 파일에서 test-guard를 실행하는 줄의 삭제·변경(`\|\| true`, 훅 matcher 축소, `continue-on-error`); 에이전트의 `git commit --no-verify`, `core.hooksPath`, git alias·include·`GIT_CONFIG_GLOBAL`, `Test-Guard-Approved` 트레일러, `TEST_GUARD_*` 변수, 플러그인 비활성화·제거, `.git/`·`.claude/settings.local.json`·`node_modules/test-guard` 쓰기 |
 | TG007 | assertion 약화: `toBe(3)` → `toBeDefined()` / `not.toBe(…)` / `toBeGreaterThan(…)`, `assertEqual` → `assertTrue` / `assertNotEqual`, `assert x == y` → `assert x != y`, `toThrow(X)` → `toThrow()`, `pytest.raises(ValueError)` → `pytest.raises(Exception)`, 그리고 `expect(true).toBe(true)` 같은 의미 없는 assertion |
 
@@ -272,9 +272,12 @@ repos:
   클래스로 봅니다. 사용자 지정 `norecursedirs`는 읽지 않습니다. 다른 곳에서 import한 JS 테스트
   함수(`import { it } from './fake'`)와 JS 식별자 안의 유니코드 이스케이프는 잡지 못합니다.
 - **겉모양은 그대로인데 실제로는 아무것도 검사하지 않는 테스트**는 개수가 그대로라 아직 잡지
-  못합니다: 테스트 앞부분의 `return`, `try { … } catch {}`로 감싼 assertion, `if (false)` 안의
+  못합니다: 테스트 앞부분의 `return`, `if (false)` 안의
   테스트, 빈 `it.each([])`, 테스트 대상 모듈을 mock으로 바꾸기, 버그에 맞춰 기대값 바꾸기.
   문법을 이해하는 분석(계획 중)이 필요합니다.
+- **간접적으로 삼킨 assertion**은 아직 잡지 못합니다: Promise `.catch(() => {})`, `try` 안에서
+  호출한 헬퍼 함수 속 assertion. 테스트 스텝을 다른 워크플로 파일로 옮기면 테스트 명령 삭제로
+  보고됩니다(한 번 승인하면 됩니다).
 - **아직 지원하지 않음**: C#, Go, Rust, 다른 에이전트.
 
 ## 라이선스

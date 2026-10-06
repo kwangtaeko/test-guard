@@ -12,4 +12,5 @@
 - TG007 확장(AST와 함께): `toEqual(expect.anything())`, `toBe(add(1, 2))` 같은 동어반복, `pytest.approx(…, abs=큰값)`, `assertEquals(f(), f())`, `assertDoesNotThrow`, `raises((ValueError, Exception))`
 - 0.2 AST(레드팀 0.1.1 기록): 개수는 그대로 두고 테스트를 무력화하는 수법 탐지 — 테스트 앞부분 `return`, `try { … } catch {}`로 감싼 assertion, `if (false)` 안의 테스트, 빈 `it.each([])`, 테스트 대상 모듈 mock(`vi.mock('./x')`/`jest.mock`), 버그에 맞춘 기대값 변경(TG007 확장과 함께)
 - 스냅샷 갱신(`-u`, `.snap`, 인라인 스냅샷)은 ROADMAP §12 M10(TG008)으로 옮김
+- M7 레드팀에서 남긴 것(M11 엔진과 함께): Promise `.then(…).catch(() => {})`로 삼킨 assertion, `try` 안에서 호출한 헬퍼·람다 속 assertion, `catch (e) { if (e.name !== 'AssertionError') throw e }`, 워크플로 간 테스트 스텝 이동을 파일 경계 너머로 짝짓기, `continue-on-error: ${{ matrix.experimental }}` 허용 여부, `npm test --if-present`, 재시도 액션의 `continue_on_error`
 - 0.2 검토에서 보류: "새 기대값 == 실제 테스트 출력" 판정(테스트 실행 필요), 새 코드의 suppressions(eslint-disable, @ts-ignore, noqa 등) 추가, CI의 일반 테스트 잡 삭제·커버리지 임계값 하향, aislop 등 슬롭 도구 결과 병합

@@ -1,5 +1,6 @@
 import type { LanguageSpec } from './index.js';
 import { stripCLike } from './strip.js';
+import { blankSwallowedBraces, reportsFailure } from './swallowed.js';
 
 const MODIFIERS =
   'skip|only|each|concurrent|skipIf|runIf|fails|failing|sequential';
@@ -50,6 +51,17 @@ export const js: LanguageSpec = {
     'g',
   ),
   assertions: /(?<![\w$.])(?:expect(?:\.soft)?|assert(?:\.\w+)?)\s*\(/g,
+  // `catch` takes every error; it swallows unless it fails the test itself.
+  unchecked: (code) =>
+    blankSwallowedBraces(
+      code,
+      (_, body) =>
+        !reportsFailure(
+          body,
+          /(?<![\w$])(?:throw|expect|assert|fail|reject)(?![\w$])|\.(?:fail|reject)\s*\(|(?<![\w$.])done\s*\(\s*[^\s)]|(?<![\w$.])t\.(?!log|pass|plan|teardown|timeout)\w+\s*\(|\.should\b/,
+          /(?<![\w$.])expect\s*\(\s*[\w$]+\s*\)\s*\.\s*(?:toBeDefined|toBeTruthy|not\s*\.\s*toBe(?:Null|Undefined))\s*\(\s*\)|(?<![\w$.])expect\s*\(\s*(true|false|null|\d+)\s*\)\s*\.\s*(?:toBe|toEqual)\s*\(\s*\1\s*\)|(?<![\w$.])assert(?:\.ok)?\s*\(\s*[\w$]+\s*\)/g,
+        ),
+    ),
   skips: (code) => {
     const patterns = [...SKIPS];
     // The test callback's context under any name: `(c) => { c.skip() }`.
