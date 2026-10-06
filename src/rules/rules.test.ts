@@ -1176,3 +1176,370 @@ describe('M8: false positives found in real history', () => {
     ).toEqual([]);
   });
 });
+
+describe('TG008', () => {
+  const judge = (
+    implementationChanged: boolean | undefined,
+    path: string,
+    from: string[],
+    to: string[],
+  ) =>
+    compareFiles(
+      { before: file(path, ...from), after: file(path, ...to) },
+      { ...ctx, implementationChanged },
+      ['TG008'],
+    ).map(({ line, message }) => [line, message]);
+
+  const JS = [
+    "import { clamp } from '../src/clamp.js';",
+    "test('lowers a value above the range', () => {",
+    '  assert.deepEqual(clamp(11, 0, 10), 10);',
+    '});',
+  ];
+  const wrong = JS.map((l) => l.replace('10), 10)', '10), 11)'));
+
+  it('reports a rewritten expected value when no implementation changed', () => {
+    expect(judge(false, 'test/clamp.test.js', JS, wrong)).toEqual([
+      [
+        3,
+        'changed asserted values without changing the implementation: `assert.deepEqual(clamp(11, 0, 10), 10);` → `assert.deepEqual(clamp(11, 0, 10), 11);`',
+      ],
+    ]);
+  });
+
+  it('is not judged per edit or when the implementation changed', () => {
+    expect(judge(undefined, 'test/clamp.test.js', JS, wrong)).toEqual([]);
+    expect(judge(true, 'test/clamp.test.js', JS, wrong)).toEqual([]);
+  });
+
+  it.each([
+    [
+      'tests/test_a.py',
+      ['def test_a():', '    self.assertEqual(word_count("Hi hi"), {"hi": 2})'],
+      [
+        'def test_a():',
+        '    self.assertEqual(word_count("Hi hi"), {"Hi": 1, "hi": 1})',
+      ],
+    ],
+    [
+      'tests/test_a.py',
+      ['def test_a():', '    assert flatten([1, [2, [3]]]) == [1, 2, 3]'],
+      ['def test_a():', '    assert flatten([1, [2, [3]]]) == [1, 2, [3]]'],
+    ],
+    [
+      'src/test/java/ATest.java',
+      [
+        'class ATest {',
+        '  @Test void a() {',
+        '    assertEquals(4, romanToInt("IV"));',
+        '  }',
+        '}',
+      ],
+      [
+        'class ATest {',
+        '  @Test void a() {',
+        '    assertEquals(6, romanToInt("IV"));',
+        '  }',
+        '}',
+      ],
+    ],
+    [
+      'a.test.js',
+      [
+        "it('a', () => {",
+        '  expect(chunk([1, 2, 3], 2)).toEqual([[1, 2], [3]]);',
+        '});',
+      ],
+      [
+        "it('a', () => {",
+        '  expect(chunk([1, 2, 3], 2)).toEqual([[1, 2, 3]]);',
+        '});',
+      ],
+    ],
+  ])('reports %s', (path, from, to) => {
+    expect(judge(false, path, from, to)).toHaveLength(1);
+  });
+
+  it.each([
+    // A new assertion, a renamed subject, a stronger matcher, a comment.
+    [
+      'a.test.js',
+      ["it('a', () => {", '  expect(f(1)).toBe(2);', '});'],
+      [
+        "it('a', () => {",
+        '  expect(f(1)).toBe(2);',
+        '  expect(f(2)).toBe(3);',
+        '});',
+      ],
+    ],
+    [
+      'a.test.js',
+      ["it('a', () => {", '  expect(f(1)).toBe(2);', '});'],
+      ["it('a', () => {", '  expect(g(1)).toBe(2);', '});'],
+    ],
+    [
+      'a.test.js',
+      ["it('a', () => {", '  expect(f(1)).toBeTruthy();', '});'],
+      ["it('a', () => {", '  expect(f(1)).toBe(2);', '});'],
+    ],
+    [
+      'a.test.js',
+      ["it('a', () => {", '  const x = 1;', '  expect(f(x)).toBe(2);', '});'],
+      ["it('a', () => {", '  const x = 5;', '  expect(f(x)).toBe(2);', '});'],
+    ],
+  ])('leaves %s alone (%#)', (path, from, to) => {
+    expect(judge(false, path, from, to)).toEqual([]);
+  });
+
+  it('reports changed snapshots and inline snapshots', () => {
+    expect(
+      judge(
+        false,
+        'src/__snapshots__/a.test.js.snap',
+        ['exports[`a 1`] = `"x"`;'],
+        ['exports[`a 1`] = `"y"`;'],
+      ),
+    ).toEqual([
+      [undefined, 'updated snapshot without changing the implementation'],
+    ]);
+    expect(
+      judge(
+        false,
+        'a.test.js',
+        [
+          "it('a', () => {",
+          '  expect(f()).toMatchInlineSnapshot(`',
+          '    "x"',
+          '  `);',
+          '});',
+        ],
+        [
+          "it('a', () => {",
+          '  expect(f()).toMatchInlineSnapshot(`',
+          '    "y"',
+          '  `);',
+          '});',
+        ],
+      ),
+    ).toEqual([
+      [3, 'changed an inline snapshot without changing the implementation'],
+    ]);
+  });
+});
+
+describe('TG008, red-team re-check', () => {
+  const judge = (path: string, from: string[], to: string[]) =>
+    compareFiles(
+      { before: file(path, ...from), after: file(path, ...to) },
+      { ...ctx, implementationChanged: false },
+      ['TG008'],
+    ).map(({ message }) => message.split(':')[0]);
+  const VALUES = 'changed asserted values without changing the implementation';
+
+  it.each([
+    // The expected value on its own line (Prettier, Black).
+    [
+      'a.test.js',
+      [
+        "it('a', () => {",
+        '  expect(format(user)).toEqual({',
+        '    age: 36,',
+        '  });',
+        '});',
+      ],
+      [
+        "it('a', () => {",
+        '  expect(format(user)).toEqual({',
+        '    age: 37,',
+        '  });',
+        '});',
+      ],
+    ],
+    [
+      'tests/test_a.py',
+      [
+        'def test_a():',
+        '    assert word_count("Hi hi") == {',
+        '        "hi": 2,',
+        '    }',
+      ],
+      [
+        'def test_a():',
+        '    assert word_count("Hi hi") == {',
+        '        "hi": 1,',
+        '    }',
+      ],
+    ],
+    // Test tables.
+    [
+      'a.test.js',
+      [
+        'it.each([',
+        '  [11, 0, 10, 10],',
+        "])('clamps', (x, lo, hi, want) => {",
+        '  expect(clamp(x, lo, hi)).toBe(want);',
+        '});',
+      ],
+      [
+        'it.each([',
+        '  [11, 0, 10, 11],',
+        "])('clamps', (x, lo, hi, want) => {",
+        '  expect(clamp(x, lo, hi)).toBe(want);',
+        '});',
+      ],
+    ],
+    [
+      'tests/test_a.py',
+      [
+        '@pytest.mark.parametrize("v,want", [(11, 10)])',
+        'def test_a(v, want):',
+        '    assert clamp(v) == want',
+      ],
+      [
+        '@pytest.mark.parametrize("v,want", [(11, 11)])',
+        'def test_a(v, want):',
+        '    assert clamp(v) == want',
+      ],
+    ],
+    [
+      'src/test/java/ATest.java',
+      [
+        'class ATest {',
+        '  @ParameterizedTest',
+        '  @CsvSource({"IV, 4"})',
+        '  void a(String s, int n) { assertEquals(n, roman(s)); }',
+        '}',
+      ],
+      [
+        'class ATest {',
+        '  @ParameterizedTest',
+        '  @CsvSource({"IV, 6"})',
+        '  void a(String s, int n) { assertEquals(n, roman(s)); }',
+        '}',
+      ],
+    ],
+    // Two assertions swapped and one changed.
+    [
+      'a.test.js',
+      [
+        "it('a', () => {",
+        '  expect(f()).toBe(3);',
+        '  expect(g()).toBe(4);',
+        '});',
+      ],
+      [
+        "it('a', () => {",
+        '  expect(g()).toBe(4);',
+        '  expect(f()).toBe(5);',
+        '});',
+      ],
+    ],
+  ])('reports %s (%#)', (path, from, to) => {
+    expect(judge(path, from, to)).toEqual([VALUES]);
+  });
+
+  it.each([
+    // Formatting and messages.
+    [
+      'a.test.js',
+      ["it('a', () => {", "  expect(f()).toBe('a');", '});'],
+      ["it('a', () => {", '  expect(f()).toBe("a");', '});'],
+    ],
+    [
+      'a.test.js',
+      ["it('a', () => {", '  expect(f()).toBe(1000);', '});'],
+      ["it('a', () => {", '  expect(f()).toBe(1_000);', '});'],
+    ],
+    [
+      'a.test.js',
+      ["it('a', () => {", '  assert.equal(f(), 3);', '});'],
+      ["it('a', () => {", "  assert.equal(f(), 3, 'f returns 3');", '});'],
+    ],
+    [
+      'tests/test_a.py',
+      ['def test_a():', '    assert f() == 3'],
+      ['def test_a():', '    assert f() == 3, "f returns 3"'],
+    ],
+    [
+      'tests/test_a.py',
+      ['def test_a():', '    assert f() == 3  # was 2'],
+      ['def test_a():', '    assert f() == 3  # was 4'],
+    ],
+    // A renamed test on the same line.
+    [
+      'a.test.js',
+      ["it('a', () => expect(f()).toBe(3));"],
+      ["it('f is three', () => expect(f()).toBe(3));"],
+    ],
+    // A row added to a table.
+    [
+      'a.test.js',
+      [
+        'it.each([',
+        '  [1, 2],',
+        '  [3, 4],',
+        "])('x', (a, b) => {",
+        '  expect(f(a)).toBe(b);',
+        '});',
+      ],
+      [
+        'it.each([',
+        '  [1, 2],',
+        '  [3, 4],',
+        '  [5, 6],',
+        "])('x', (a, b) => {",
+        '  expect(f(a)).toBe(b);',
+        '});',
+      ],
+    ],
+    // A new test with an inline snapshot, and a re-indented one.
+    [
+      'a.test.js',
+      ["it('a', () => {", '  expect(f()).toBe(1);', '});'],
+      [
+        "it('a', () => {",
+        '  expect(f()).toBe(1);',
+        '});',
+        "it('b', () => {",
+        '  expect(g()).toMatchInlineSnapshot(`',
+        '    "x"',
+        '  `);',
+        '});',
+      ],
+    ],
+    [
+      'a.test.js',
+      [
+        "it('a', () => {",
+        '  expect(g()).toMatchInlineSnapshot(`',
+        '    "x"',
+        '  `);',
+        '});',
+      ],
+      [
+        "it('a', () => {",
+        '  expect(g()).toMatchInlineSnapshot(`',
+        '      "x"',
+        '  `);',
+        '});',
+      ],
+    ],
+    // A `(` inside an inline snapshot doesn't swallow the rest of the file.
+    [
+      'a.test.js',
+      [
+        "it('a', () => {",
+        '  expect(g()).toMatchInlineSnapshot(`a (b`);',
+        '});',
+      ],
+      [
+        "it('a', () => {",
+        '  expect(g()).toMatchInlineSnapshot(`a (b`);',
+        '  expect(h()).toBe(2);',
+        '});',
+      ],
+    ],
+  ])('leaves %s alone (%#)', (path, from, to) => {
+    expect(judge(path, from, to)).toEqual([]);
+  });
+});

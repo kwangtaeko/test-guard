@@ -1,5 +1,12 @@
 import { execFileSync } from 'node:child_process';
-import { copyFileSync, existsSync, mkdtempSync, rmSync } from 'node:fs';
+import {
+  copyFileSync,
+  existsSync,
+  mkdtempSync,
+  rmSync,
+  statSync,
+  utimesSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 
@@ -86,7 +93,14 @@ export function createWorktreeIndex(root: string): {
   const dir = mkdtempSync(join(tmpdir(), 'test-guard-'));
   const tempIndex = join(dir, 'index');
   try {
-    if (existsSync(indexPath)) copyFileSync(indexPath, tempIndex);
+    if (existsSync(indexPath)) {
+      copyFileSync(indexPath, tempIndex);
+      // Keep the index's own timestamp: git re-reads files changed in the
+      // same second as the index only when it can tell (racy git). A newer
+      // copy would hide a same-size edit made right after a commit.
+      const { atime, mtime } = statSync(indexPath);
+      utimesSync(tempIndex, atime, mtime);
+    }
     const env = { ...process.env, GIT_INDEX_FILE: tempIndex };
     // `update-index --assume-unchanged` / `--skip-worktree` would hide edits
     // from `git add`. Sparse checkout leaves skip-worktree files off disk;

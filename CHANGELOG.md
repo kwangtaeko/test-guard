@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+- Agent hooks: read-only `find` (without `-delete`/`-exec`) and shell
+  wrappers such as `powershell -Command "Get-Content …"` are no longer
+  blocked for mentioning `.git` or `.codex`; the commands inside a wrapper
+  are judged instead.
+- `bench/`: outcome benchmark of Claude Code and Codex with and without
+  test-guard; results in the README.
+- TG008 (new): expected values rewritten to match the code. An assertion
+  whose values changed, or a changed `.snap` file or inline snapshot, while no
+  implementation file changed in the same commit, PR or agent session. Judged
+  at commit, in CI and at Stop, not per edit. Agents are stopped from running
+  `jest -u`, `vitest --update`, `npm test -- -u` or Playwright
+  `--update-snapshots`.
 - TG003: assertions inside a `try` whose `catch` / `except` ignores
   failures no longer count (JS any `catch`; Python bare, `Exception`,
   `BaseException`, `AssertionError`, and `with suppress(…)`; Java

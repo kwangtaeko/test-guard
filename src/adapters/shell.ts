@@ -428,6 +428,33 @@ function walk(command: string, cwd: string, depth = 0): Segment[] {
   return out;
 }
 
+// A test run that rewrites snapshots to match the current output (TG008):
+// `jest -u`, `vitest --update`, `npm test -- -u`, Playwright
+// `--update-snapshots`.
+export function updatesSnapshots(command: string, cwd: string): boolean {
+  return walk(command, cwd).some(({ tokens }) => {
+    if (verbOf(tokens) === 'echo') return false;
+    const runner =
+      tokens.some((t) =>
+        /(?:^|[\\/])(?:jest|vitest|playwright|pytest)(?:\.[cm]?js|\.cmd)?$/i.test(
+          t,
+        ),
+      ) ||
+      (/^(?:npm|pnpm|yarn|bun)$/i.test(verbOf(tokens)) &&
+        tokens.some((t) => /^(?:t|test(?::.*)?)$/.test(t)));
+    // Jest also takes `--u`; pytest plugins have their own flags.
+    return (
+      runner &&
+      tokens.some(
+        (t) =>
+          /^(?:--?u|--update|--updateSnapshot|--update-snapshots?|--snapshot[.-]update|--force-regen|--inline-snapshot=(?:fix|create|update)\S*)(?:=.*)?$/.test(
+            t,
+          ) && !/=(?:false|0)$/.test(t),
+      )
+    );
+  });
+}
+
 // PowerShell `-Path:x` and `--file=x` carry a value in the flag.
 function flagValue(token: string): string | null {
   return /^--?[A-Za-z][\w-]*[:=](.+)$/.exec(token)?.[1] ?? null;
@@ -599,10 +626,17 @@ export function findBypass(command: string, cwd = process.cwd()): string[] {
     const gitSub = verb === 'git' ? gitParts(tokens).sub : '';
     // git commands that delete, move or overwrite files in the work tree.
     const gitWrites = ['rm', 'mv', 'checkout', 'restore'].includes(gitSub);
+    // `find` only lists unless it deletes, runs a command or writes a file.
+    const findLists =
+      verb === 'find' &&
+      !tokens.some((t) => /^-(?:delete|exec\w*|ok\w*|fprint\w*|fls)$/.test(t));
+    // A shell wrapper (`bash -c "…"`, `pwsh -Command "…"`) is judged by the
+    // commands it runs, which `walk` lists separately.
+    const wrapper = nestedCommand(tokens) !== null;
     const writes =
       tokens.some(isRedirect) ||
       gitWrites ||
-      (verb !== 'git' && !READ_ONLY.has(verb));
+      (verb !== 'git' && !READ_ONLY.has(verb) && !findLists && !wrapper);
     if (!writes) continue;
     const replaces =
       REPLACES.has(verb) ||

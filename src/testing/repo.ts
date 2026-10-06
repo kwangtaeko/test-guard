@@ -7,6 +7,7 @@ import {
   mkdtempSync,
   readdirSync,
   rmSync,
+  utimesSync,
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -53,6 +54,17 @@ export class Repo {
       if (entry !== '.git') rmSync(join(this.dir, entry), { recursive: true });
     }
     cpSync(fixtureDir, this.dir, { recursive: true });
+    // Copies keep the fixture's mtime on Windows; a before/after pair of the
+    // same size would then look unchanged to git. Real edits are newer.
+    const now = new Date();
+    for (const entry of readdirSync(this.dir, {
+      recursive: true,
+      withFileTypes: true,
+    })) {
+      if (entry.isFile() && !entry.parentPath.includes('.git')) {
+        utimesSync(join(entry.parentPath, entry.name), now, now);
+      }
+    }
   }
 
   commitAll(message = 'commit'): void {

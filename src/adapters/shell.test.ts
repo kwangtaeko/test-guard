@@ -1,6 +1,11 @@
 import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { fileOps, findBypass, splitCommand } from './shell.js';
+import {
+  fileOps,
+  findBypass,
+  splitCommand,
+  updatesSnapshots,
+} from './shell.js';
 
 describe('splitCommand', () => {
   it('splits simple commands and keeps quoted words', () => {
@@ -289,5 +294,73 @@ describe('findBypass round 2', () => {
     expect(splitCommand('echo x>a 2>&1 >>b')).toEqual([
       ['echo', 'x', '>', 'a', '>>', 'b'],
     ]);
+  });
+});
+
+describe('updatesSnapshots', () => {
+  const cwd = process.cwd();
+  it.each([
+    'npx jest -u',
+    'npx vitest run --update',
+    'npm test -- -u',
+    'pnpm test --updateSnapshot',
+    'npx playwright test --update-snapshots',
+    'bash -c "npx vitest -u"',
+  ])('%s', (command) => {
+    expect(updatesSnapshots(command, cwd)).toBe(true);
+  });
+
+  it.each([
+    'npx vitest run',
+    'npm test',
+    'npm update -u',
+    'git pull -u origin main',
+    'tar -u x.tar',
+  ])('leaves %s alone', (command) => {
+    expect(updatesSnapshots(command, cwd)).toBe(false);
+  });
+});
+
+describe('updatesSnapshots, red-team re-check', () => {
+  const cwd = process.cwd();
+  it.each([
+    'npm t -- -u',
+    'node node_modules/vitest/vitest.mjs -u',
+    'npx jest --u',
+    'npx vitest --snapshot.update',
+    'pytest --snapshot-update',
+    'pytest --inline-snapshot=fix',
+    'pytest --force-regen',
+  ])('%s', (command) => {
+    expect(updatesSnapshots(command, cwd)).toBe(true);
+  });
+
+  it.each([
+    'echo npx jest -u',
+    'npx vitest run --update=false',
+    'mocha -u bdd',
+  ])('leaves %s alone', (command) => {
+    expect(updatesSnapshots(command, cwd)).toBe(false);
+  });
+});
+
+describe('read-only commands an agent ran in the M9 benchmark', () => {
+  const cwd = process.cwd();
+  it.each([
+    'find . -path ./.git -prune -o -type f -print',
+    'ls -la; cat *.json 2>/dev/null; find . -path ./.git -prune -o -type f -print',
+    `"C:\\WINDOWS\\System32\\WindowsPowerShell\\v1.0\\powershell.exe" -Command "Get-Content -Raw 'C:\\Users\\me\\.codex\\plugins\\cache\\x\\SKILL.md'"`,
+    'bash -c "cat .git/HEAD"',
+  ])('allows %s', (command) => {
+    expect(findBypass(command, cwd)).toEqual([]);
+  });
+
+  it.each([
+    'find .git -name "*.sample" -delete',
+    'find .git/hooks -exec rm {} \\;',
+    'pwsh -Command "Remove-Item .codex/hooks.json"',
+    'bash -c "echo x > .git/hooks/pre-commit"',
+  ])('still blocks %s', (command) => {
+    expect(findBypass(command, cwd)).not.toEqual([]);
   });
 });

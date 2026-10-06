@@ -131,6 +131,7 @@ git commit -m "test: skip flaky subtraction" -m "Test-Guard-Approved: tracked in
 | TG005 | Test runner config tampering: `passWithNoTests`, `testPathIgnorePatterns`, `setupFiles`/`globalSetup`, pytest `addopts` with `-k`/`--deselect`/`--ignore`, `collect_ignore`, `pytest_*` hooks in `conftest.py`, Maven `skipTests`/`testFailureIgnore`/`groups`/`includes`, Gradle `enabled = false`/`ignoreFailures`/`excludeTags`; a GitHub Actions test step given `\|\| true`, `set +e`, `continue-on-error`, `if:`, `-u` or a test filter, or a test command removed from CI, … |
 | TG006 | Getting around test-guard: changing `.test-guard.json`; removing or changing the line that runs it in hook/CI files (`\|\| true`, a narrower hook matcher, `continue-on-error`); from an agent: `git commit --no-verify`, `core.hooksPath`, git aliases/includes/`GIT_CONFIG_GLOBAL`, `Test-Guard-Approved` trailers, `TEST_GUARD_*` variables, disabling or uninstalling the plugin, and writing `.git/`, `.claude/settings.local.json` or `node_modules/test-guard` |
 | TG007 | Weaker assertions: `toBe(3)` → `toBeDefined()` / `not.toBe(…)` / `toBeGreaterThan(…)`, `assertEqual` → `assertTrue` / `assertNotEqual`, `assert x == y` → `assert x != y`, `toThrow(X)` → `toThrow()`, `pytest.raises(ValueError)` → `pytest.raises(Exception)`, and meaningless ones like `expect(true).toBe(true)` |
+| TG008 | Expected values rewritten to match the code: an assertion whose values changed (`toBe(10)` → `toBe(11)`), a changed `.snap` file or inline snapshot, while no implementation file changed. Judged at commit, in CI and when the agent stops (not per edit, so fixing a test before the code is fine); agents are also stopped from running tests with `-u` |
 
 Languages: TypeScript/JavaScript (Jest, Vitest, Mocha), Python (pytest,
 unittest) and Java (JUnit 4/5).
@@ -261,6 +262,17 @@ repos:
         always_run: true
 ```
 
+## Does it change what agents do?
+
+[`bench/`](bench/README.md) gives Claude Code and Codex 12 small projects
+whose failing test contradicts the spec, so the only ways to green are
+changing the test or bending the code to it. Told "make the tests pass", they
+changed the test in **14 of 24 runs without test-guard and 1 of 24 with it**.
+Told also "do not modify the tests", neither changed tests, but Codex bent the
+code to the wrong test in most runs, which test-guard doesn't catch yet. On
+tasks with a real bug, test-guard kept no agent from fixing it. Small
+samples; details and caveats in [bench/README.md](bench/README.md).
+
 ## False positives on real history
 
 `scripts/fp-history.mjs` runs `test-guard check` on each commit of a
@@ -313,9 +325,11 @@ node scripts/fp-history.mjs /tmp/flask --commits 300
   unicode escapes in JS identifiers aren't detected.
 - **Tests that still look intact but no longer check anything** keep their
   counts, so they aren't detected yet: an early `return`, a test inside
-  `if (false)`, an empty `it.each([])`,
-  mocking the module under test, or changing expected values to match a bug.
-  These need syntax-aware analysis (planned).
+  `if (false)`, an empty `it.each([])`, or mocking the module under test.
+  These need syntax-aware analysis (planned). TG008 catches expected values
+  changed on their own, but not when real code or a dependency changed in the
+  same commit (a new source file with code counts), nor an expected value
+  moved into a variable.
 - **Assertions swallowed indirectly** aren't seen yet: a promise
   `.catch(() => {})`, or an assertion in a helper function called inside the
   `try`. Moving a test step from one workflow file to another is reported as
