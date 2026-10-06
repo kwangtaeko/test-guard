@@ -8,7 +8,9 @@ import { RULE_IDS, type RuleId } from '../rules/index.js';
 import type { Finding } from '../types.js';
 import {
   type CompareContext,
+  changesCode,
   compareFiles,
+  isDependencyFile,
   isImplementation,
   isWatched,
 } from './compare.js';
@@ -68,11 +70,19 @@ export function runCheck(options: CheckOptions): CheckResult {
 
     const findings: Finding[] = [];
     const changes = [...listChanges(root, base, mode, env)];
-    ctx.implementationChanged = changes.some(
-      ({ beforePath, afterPath }) =>
-        (beforePath !== null && isImplementation(beforePath, ctx)) ||
-        (afterPath !== null && isImplementation(afterPath, ctx)),
-    );
+    // A real implementation change: code or dependencies, not just comments
+    // or blank lines (TG008).
+    ctx.implementationChanged = changes.some(({ beforePath, afterPath }) => {
+      const path = afterPath ?? beforePath;
+      if (path === null || !isImplementation(path, ctx)) return false;
+      // Deleted or renamed code counts; an added file only with code in it.
+      if (isDependencyFile(path) || afterPath === null) return true;
+      if (beforePath !== null && beforePath !== afterPath) return true;
+      return changesCode(
+        base && beforePath ? readBlob(root, `${base}:${beforePath}`, env) : '',
+        readBlob(root, afterSpec(mode, path), env),
+      );
+    });
     for (const { beforePath, afterPath } of changes) {
       const change = {
         before:

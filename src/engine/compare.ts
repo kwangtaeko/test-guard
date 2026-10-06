@@ -99,15 +99,40 @@ function toRuleInput(
   };
 }
 
-// Files whose change can explain new expected values: anything but tests,
-// snapshots, docs and the files that run test-guard.
+// Dependency manifests and lockfiles: a dependency bump can change outputs.
+const DEPENDENCIES =
+  /(?:^|\/)(?:package-lock\.json|npm-shrinkwrap\.json|pnpm-lock\.yaml|yarn\.lock|bun\.lockb?|requirements[\w.-]*\.txt|pyproject\.toml|poetry\.lock|uv\.lock|Pipfile(?:\.lock)?|pom\.xml|build\.gradle(?:\.kts)?|gradle\.lockfile|go\.(?:mod|sum)|Cargo\.(?:toml|lock)|Gemfile(?:\.lock)?|composer\.(?:json|lock))$/;
+const CODE =
+  /\.(?:[cm]?[jt]sx?|vue|svelte|py|java|kt|kts|scala|groovy|go|rs|cs|fs|vb|rb|php|swift|m|mm|c|cc|cpp|cxx|h|hh|hpp|sql|sh|ps1)$/i;
+
+// Files whose change can explain new expected values (TG008): code and
+// dependencies outside the test folders. Config, data and docs don't count,
+// so touching `.gitignore` or adding an empty file explains nothing.
 export function isImplementation(path: string, ctx: CompareContext): boolean {
   return (
     ctx.detect(path) === null &&
     !isSnapshot(path) &&
-    !/\.(?:md|mdx|markdown|txt|rst|adoc)$/i.test(path) &&
-    guardFileKind(path) === null
+    guardFileKind(path) === null &&
+    (DEPENDENCIES.test(path) ||
+      (CODE.test(path) &&
+        !/(?:^|\/)(?:tests?|__tests__|spec|__mocks__|fixtures?)\//i.test(path)))
   );
+}
+
+export const isDependencyFile = (path: string) => DEPENDENCIES.test(path);
+
+// Whether a code change does anything: lines other than blank ones and
+// comments changed.
+export function changesCode(before: string, after: string): boolean {
+  const hunks = diffLines(splitLines(before), splitLines(after));
+  const lines = [
+    ...hunks.flatMap((h) => h.deleted.map((n) => splitLines(before)[n - 1])),
+    ...hunks.flatMap((h) => h.added.map((n) => splitLines(after)[n - 1])),
+  ];
+  return lines.some((line) => {
+    const t = (line ?? '').trim();
+    return t !== '' && !/^(?:\/\/|#|\/\*|\*|<!--|--)/.test(t);
+  });
 }
 
 function parentDir(path: string): string {

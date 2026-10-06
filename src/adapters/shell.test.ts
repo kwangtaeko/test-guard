@@ -320,3 +320,26 @@ describe('updatesSnapshots', () => {
     expect(updatesSnapshots(command, cwd)).toBe(false);
   });
 });
+
+describe('updatesSnapshots, red-team re-check', () => {
+  const cwd = process.cwd();
+  it.each([
+    'npm t -- -u',
+    'node node_modules/vitest/vitest.mjs -u',
+    'npx jest --u',
+    'npx vitest --snapshot.update',
+    'pytest --snapshot-update',
+    'pytest --inline-snapshot=fix',
+    'pytest --force-regen',
+  ])('%s', (command) => {
+    expect(updatesSnapshots(command, cwd)).toBe(true);
+  });
+
+  it.each([
+    'echo npx jest -u',
+    'npx vitest run --update=false',
+    'mocha -u bdd',
+  ])('leaves %s alone', (command) => {
+    expect(updatesSnapshots(command, cwd)).toBe(false);
+  });
+});

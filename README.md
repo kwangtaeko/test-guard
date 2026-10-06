@@ -316,8 +316,9 @@ node scripts/fp-history.mjs /tmp/flask --commits 300
   counts, so they aren't detected yet: an early `return`, a test inside
   `if (false)`, an empty `it.each([])`, or mocking the module under test.
   These need syntax-aware analysis (planned). TG008 catches expected values
-  changed on their own, but not when the implementation changed in the same
-  commit.
+  changed on their own, but not when real code or a dependency changed in the
+  same commit (a new source file with code counts), nor an expected value
+  moved into a variable.
 - **Assertions swallowed indirectly** aren't seen yet: a promise
   `.catch(() => {})`, or an assertion in a helper function called inside the
   `try`. Moving a test step from one workflow file to another is reported as

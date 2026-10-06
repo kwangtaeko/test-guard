@@ -433,18 +433,23 @@ function walk(command: string, cwd: string, depth = 0): Segment[] {
 // `--update-snapshots`.
 export function updatesSnapshots(command: string, cwd: string): boolean {
   return walk(command, cwd).some(({ tokens }) => {
+    if (verbOf(tokens) === 'echo') return false;
     const runner =
       tokens.some((t) =>
-        /(?:^|[\\/])(?:jest|vitest|playwright)(?:\.c?[jm]?s|\.cmd)?$/i.test(t),
-      ) ||
-      (/^(?:npm|pnpm|yarn|bun)$/i.test(verbOf(tokens)) &&
-        tokens.some((t) => /^test(?::|$)/.test(t)));
-    return (
-      runner &&
-      tokens.some((t) =>
-        /^(?:-u|--update|--updateSnapshot|--update-snapshots?)(?:=.*)?$/.test(
+        /(?:^|[\\/])(?:jest|vitest|playwright|pytest)(?:\.[cm]?js|\.cmd)?$/i.test(
           t,
         ),
+      ) ||
+      (/^(?:npm|pnpm|yarn|bun)$/i.test(verbOf(tokens)) &&
+        tokens.some((t) => /^(?:t|test(?::.*)?)$/.test(t)));
+    // Jest also takes `--u`; pytest plugins have their own flags.
+    return (
+      runner &&
+      tokens.some(
+        (t) =>
+          /^(?:--?u|--update|--updateSnapshot|--update-snapshots?|--snapshot[.-]update|--force-regen|--inline-snapshot=(?:fix|create|update)\S*)(?:=.*)?$/.test(
+            t,
+          ) && !/=(?:false|0)$/.test(t),
       )
     );
   });
