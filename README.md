@@ -262,6 +262,17 @@ repos:
         always_run: true
 ```
 
+## Does it change what agents do?
+
+[`bench/`](bench/README.md) gives Claude Code and Codex 12 small projects
+whose failing test contradicts the spec, so the only ways to green are
+changing the test or bending the code to it. Told "make the tests pass", they
+changed the test in **14 of 24 runs without test-guard and 1 of 24 with it**.
+Told also "do not modify the tests", neither changed tests, but Codex bent the
+code to the wrong test in most runs, which test-guard doesn't catch yet. On
+tasks with a real bug, test-guard kept no agent from fixing it. Small
+samples; details and caveats in [bench/README.md](bench/README.md).
+
 ## False positives on real history
 
 `scripts/fp-history.mjs` runs `test-guard check` on each commit of a

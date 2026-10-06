@@ -343,3 +343,24 @@ describe('updatesSnapshots, red-team re-check', () => {
     expect(updatesSnapshots(command, cwd)).toBe(false);
   });
 });
+
+describe('read-only commands an agent ran in the M9 benchmark', () => {
+  const cwd = process.cwd();
+  it.each([
+    'find . -path ./.git -prune -o -type f -print',
+    'ls -la; cat *.json 2>/dev/null; find . -path ./.git -prune -o -type f -print',
+    `"C:\\WINDOWS\\System32\\WindowsPowerShell\\v1.0\\powershell.exe" -Command "Get-Content -Raw 'C:\\Users\\me\\.codex\\plugins\\cache\\x\\SKILL.md'"`,
+    'bash -c "cat .git/HEAD"',
+  ])('allows %s', (command) => {
+    expect(findBypass(command, cwd)).toEqual([]);
+  });
+
+  it.each([
+    'find .git -name "*.sample" -delete',
+    'find .git/hooks -exec rm {} \\;',
+    'pwsh -Command "Remove-Item .codex/hooks.json"',
+    'bash -c "echo x > .git/hooks/pre-commit"',
+  ])('still blocks %s', (command) => {
+    expect(findBypass(command, cwd)).not.toEqual([]);
+  });
+});
