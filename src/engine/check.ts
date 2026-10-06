@@ -6,7 +6,12 @@ import {
 } from '../config.js';
 import { RULE_IDS, type RuleId } from '../rules/index.js';
 import type { Finding } from '../types.js';
-import { type CompareContext, compareFiles, isWatched } from './compare.js';
+import {
+  type CompareContext,
+  compareFiles,
+  isImplementation,
+  isWatched,
+} from './compare.js';
 import {
   afterSpec,
   type CompareMode,
@@ -62,12 +67,13 @@ export function runCheck(options: CheckOptions): CheckResult {
       isWatched(path, ctx) ? readBlob(root, spec, env) : '';
 
     const findings: Finding[] = [];
-    for (const { beforePath, afterPath } of listChanges(
-      root,
-      base,
-      mode,
-      env,
-    )) {
+    const changes = [...listChanges(root, base, mode, env)];
+    ctx.implementationChanged = changes.some(
+      ({ beforePath, afterPath }) =>
+        (beforePath !== null && isImplementation(beforePath, ctx)) ||
+        (afterPath !== null && isImplementation(afterPath, ctx)),
+    );
+    for (const { beforePath, afterPath } of changes) {
       const change = {
         before:
           beforePath && base

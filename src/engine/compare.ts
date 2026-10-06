@@ -2,7 +2,7 @@ import { analyzeSource, toLf } from '../languages/index.js';
 import type { TestFileDetector } from '../paths.js';
 import { RULES, type RuleId } from '../rules/index.js';
 import type { RuleFinding, RuleInput } from '../rules/types.js';
-import { guardFileKind, runnerConfigKind } from '../watched.js';
+import { guardFileKind, isSnapshot, runnerConfigKind } from '../watched.js';
 import { diffLines } from './diff.js';
 
 export interface FileVersion {
@@ -24,12 +24,17 @@ export interface CompareContext {
   // runner config in an existing directory is judged; in a new one (a new
   // package) it is not. Without it, new configs are not judged.
   dirExisted?(dir: string): boolean;
+  // Whether the comparison changed any implementation file (TG008). Unset
+  // when one file is judged on its own (an agent's edit), where it can't be
+  // known.
+  implementationChanged?: boolean;
 }
 
 // Whether the engine needs the contents of this path.
 export function isWatched(path: string, ctx: CompareContext): boolean {
   return (
     ctx.detect(path) !== null ||
+    isSnapshot(path) ||
     guardFileKind(path) !== null ||
     (runnerConfigKind(path) !== null && !ctx.excluded(path))
   );
@@ -87,10 +92,22 @@ function toRuleInput(
       change.before === null &&
       change.after !== null &&
       ctx.dirExisted?.(parentDir(change.after.path)) === true,
+    implementationChanged: ctx.implementationChanged,
     guardFile:
       guardFileKind(change.after?.path ?? '') ??
       guardFileKind(change.before?.path ?? ''),
   };
+}
+
+// Files whose change can explain new expected values: anything but tests,
+// snapshots, docs and the files that run test-guard.
+export function isImplementation(path: string, ctx: CompareContext): boolean {
+  return (
+    ctx.detect(path) === null &&
+    !isSnapshot(path) &&
+    !/\.(?:md|mdx|markdown|txt|rst|adoc)$/i.test(path) &&
+    guardFileKind(path) === null
+  );
 }
 
 function parentDir(path: string): string {

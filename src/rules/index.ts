@@ -5,6 +5,7 @@ import { tg004 } from './tg004.js';
 import { tg005 } from './tg005.js';
 import { tg006 } from './tg006.js';
 import { tg007 } from './tg007.js';
+import { tg008 } from './tg008.js';
 import type { Rule } from './types.js';
 
 export const RULE_IDS = [
@@ -15,6 +16,7 @@ export const RULE_IDS = [
   'TG005',
   'TG006',
   'TG007',
+  'TG008',
 ] as const;
 
 export type RuleId = (typeof RULE_IDS)[number];
@@ -27,6 +29,7 @@ export const RULES: Record<RuleId, Rule> = {
   TG005: tg005,
   TG006: tg006,
   TG007: tg007,
+  TG008: tg008,
 };
 
 export function isRuleId(id: string): id is RuleId {

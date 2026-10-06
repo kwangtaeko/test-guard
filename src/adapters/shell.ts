@@ -428,6 +428,28 @@ function walk(command: string, cwd: string, depth = 0): Segment[] {
   return out;
 }
 
+// A test run that rewrites snapshots to match the current output (TG008):
+// `jest -u`, `vitest --update`, `npm test -- -u`, Playwright
+// `--update-snapshots`.
+export function updatesSnapshots(command: string, cwd: string): boolean {
+  return walk(command, cwd).some(({ tokens }) => {
+    const runner =
+      tokens.some((t) =>
+        /(?:^|[\\/])(?:jest|vitest|playwright)(?:\.c?[jm]?s|\.cmd)?$/i.test(t),
+      ) ||
+      (/^(?:npm|pnpm|yarn|bun)$/i.test(verbOf(tokens)) &&
+        tokens.some((t) => /^test(?::|$)/.test(t)));
+    return (
+      runner &&
+      tokens.some((t) =>
+        /^(?:-u|--update|--updateSnapshot|--update-snapshots?)(?:=.*)?$/.test(
+          t,
+        ),
+      )
+    );
+  });
+}
+
 // PowerShell `-Path:x` and `--file=x` carry a value in the flag.
 function flagValue(token: string): string | null {
   return /^--?[A-Za-z][\w-]*[:=](.+)$/.exec(token)?.[1] ?? null;

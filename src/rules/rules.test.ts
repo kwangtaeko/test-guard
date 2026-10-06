@@ -1176,3 +1176,153 @@ describe('M8: false positives found in real history', () => {
     ).toEqual([]);
   });
 });
+
+describe('TG008', () => {
+  const judge = (
+    implementationChanged: boolean | undefined,
+    path: string,
+    from: string[],
+    to: string[],
+  ) =>
+    compareFiles(
+      { before: file(path, ...from), after: file(path, ...to) },
+      { ...ctx, implementationChanged },
+      ['TG008'],
+    ).map(({ line, message }) => [line, message]);
+
+  const JS = [
+    "import { clamp } from '../src/clamp.js';",
+    "test('lowers a value above the range', () => {",
+    '  assert.deepEqual(clamp(11, 0, 10), 10);',
+    '});',
+  ];
+  const wrong = JS.map((l) => l.replace('10), 10)', '10), 11)'));
+
+  it('reports a rewritten expected value when no implementation changed', () => {
+    expect(judge(false, 'test/clamp.test.js', JS, wrong)).toEqual([
+      [
+        3,
+        'changed asserted values without changing the implementation: `assert.deepEqual(clamp(11, 0, 10), 10);` → `assert.deepEqual(clamp(11, 0, 10), 11);`',
+      ],
+    ]);
+  });
+
+  it('is not judged per edit or when the implementation changed', () => {
+    expect(judge(undefined, 'test/clamp.test.js', JS, wrong)).toEqual([]);
+    expect(judge(true, 'test/clamp.test.js', JS, wrong)).toEqual([]);
+  });
+
+  it.each([
+    [
+      'tests/test_a.py',
+      ['def test_a():', '    self.assertEqual(word_count("Hi hi"), {"hi": 2})'],
+      [
+        'def test_a():',
+        '    self.assertEqual(word_count("Hi hi"), {"Hi": 1, "hi": 1})',
+      ],
+    ],
+    [
+      'tests/test_a.py',
+      ['def test_a():', '    assert flatten([1, [2, [3]]]) == [1, 2, 3]'],
+      ['def test_a():', '    assert flatten([1, [2, [3]]]) == [1, 2, [3]]'],
+    ],
+    [
+      'src/test/java/ATest.java',
+      [
+        'class ATest {',
+        '  @Test void a() {',
+        '    assertEquals(4, romanToInt("IV"));',
+        '  }',
+        '}',
+      ],
+      [
+        'class ATest {',
+        '  @Test void a() {',
+        '    assertEquals(6, romanToInt("IV"));',
+        '  }',
+        '}',
+      ],
+    ],
+    [
+      'a.test.js',
+      [
+        "it('a', () => {",
+        '  expect(chunk([1, 2, 3], 2)).toEqual([[1, 2], [3]]);',
+        '});',
+      ],
+      [
+        "it('a', () => {",
+        '  expect(chunk([1, 2, 3], 2)).toEqual([[1, 2, 3]]);',
+        '});',
+      ],
+    ],
+  ])('reports %s', (path, from, to) => {
+    expect(judge(false, path, from, to)).toHaveLength(1);
+  });
+
+  it.each([
+    // A new assertion, a renamed subject, a stronger matcher, a comment.
+    [
+      'a.test.js',
+      ["it('a', () => {", '  expect(f(1)).toBe(2);', '});'],
+      [
+        "it('a', () => {",
+        '  expect(f(1)).toBe(2);',
+        '  expect(f(2)).toBe(3);',
+        '});',
+      ],
+    ],
+    [
+      'a.test.js',
+      ["it('a', () => {", '  expect(f(1)).toBe(2);', '});'],
+      ["it('a', () => {", '  expect(g(1)).toBe(2);', '});'],
+    ],
+    [
+      'a.test.js',
+      ["it('a', () => {", '  expect(f(1)).toBeTruthy();', '});'],
+      ["it('a', () => {", '  expect(f(1)).toBe(2);', '});'],
+    ],
+    [
+      'a.test.js',
+      ["it('a', () => {", '  const x = 1;', '  expect(f(x)).toBe(2);', '});'],
+      ["it('a', () => {", '  const x = 5;', '  expect(f(x)).toBe(2);', '});'],
+    ],
+  ])('leaves %s alone (%#)', (path, from, to) => {
+    expect(judge(false, path, from, to)).toEqual([]);
+  });
+
+  it('reports changed snapshots and inline snapshots', () => {
+    expect(
+      judge(
+        false,
+        'src/__snapshots__/a.test.js.snap',
+        ['exports[`a 1`] = `"x"`;'],
+        ['exports[`a 1`] = `"y"`;'],
+      ),
+    ).toEqual([
+      [undefined, 'updated snapshot without changing the implementation'],
+    ]);
+    expect(
+      judge(
+        false,
+        'a.test.js',
+        [
+          "it('a', () => {",
+          '  expect(f()).toMatchInlineSnapshot(`',
+          '    "x"',
+          '  `);',
+          '});',
+        ],
+        [
+          "it('a', () => {",
+          '  expect(f()).toMatchInlineSnapshot(`',
+          '    "y"',
+          '  `);',
+          '});',
+        ],
+      ),
+    ).toEqual([
+      [3, 'changed an inline snapshot without changing the implementation'],
+    ]);
+  });
+});

@@ -1,6 +1,11 @@
 import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { fileOps, findBypass, splitCommand } from './shell.js';
+import {
+  fileOps,
+  findBypass,
+  splitCommand,
+  updatesSnapshots,
+} from './shell.js';
 
 describe('splitCommand', () => {
   it('splits simple commands and keeps quoted words', () => {
@@ -289,5 +294,29 @@ describe('findBypass round 2', () => {
     expect(splitCommand('echo x>a 2>&1 >>b')).toEqual([
       ['echo', 'x', '>', 'a', '>>', 'b'],
     ]);
+  });
+});
+
+describe('updatesSnapshots', () => {
+  const cwd = process.cwd();
+  it.each([
+    'npx jest -u',
+    'npx vitest run --update',
+    'npm test -- -u',
+    'pnpm test --updateSnapshot',
+    'npx playwright test --update-snapshots',
+    'bash -c "npx vitest -u"',
+  ])('%s', (command) => {
+    expect(updatesSnapshots(command, cwd)).toBe(true);
+  });
+
+  it.each([
+    'npx vitest run',
+    'npm test',
+    'npm update -u',
+    'git pull -u origin main',
+    'tar -u x.tar',
+  ])('leaves %s alone', (command) => {
+    expect(updatesSnapshots(command, cwd)).toBe(false);
   });
 });

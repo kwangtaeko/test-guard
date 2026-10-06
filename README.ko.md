@@ -129,6 +129,7 @@ git commit -m "test: skip flaky subtraction" -m "Test-Guard-Approved: tracked in
 | TG005 | 테스트 러너 설정 변조: `passWithNoTests`, `testPathIgnorePatterns`, `setupFiles`/`globalSetup`, pytest `addopts`의 `-k`/`--deselect`/`--ignore`, `collect_ignore`, `conftest.py`의 `pytest_*` 훅, Maven `skipTests`/`testFailureIgnore`/`groups`/`includes`, Gradle `enabled = false`/`ignoreFailures`/`excludeTags`, GitHub Actions 테스트 스텝에 붙인 `\|\| true`·`set +e`·`continue-on-error`·`if:`·`-u`·테스트 필터, CI에서 테스트 명령 삭제 등 |
 | TG006 | test-guard 우회: `.test-guard.json` 변경; 훅·CI 파일에서 test-guard를 실행하는 줄의 삭제·변경(`\|\| true`, 훅 matcher 축소, `continue-on-error`); 에이전트의 `git commit --no-verify`, `core.hooksPath`, git alias·include·`GIT_CONFIG_GLOBAL`, `Test-Guard-Approved` 트레일러, `TEST_GUARD_*` 변수, 플러그인 비활성화·제거, `.git/`·`.claude/settings.local.json`·`node_modules/test-guard` 쓰기 |
 | TG007 | assertion 약화: `toBe(3)` → `toBeDefined()` / `not.toBe(…)` / `toBeGreaterThan(…)`, `assertEqual` → `assertTrue` / `assertNotEqual`, `assert x == y` → `assert x != y`, `toThrow(X)` → `toThrow()`, `pytest.raises(ValueError)` → `pytest.raises(Exception)`, 그리고 `expect(true).toBe(true)` 같은 의미 없는 assertion |
+| TG008 | 코드에 맞춰 바꾼 기대값: 구현 파일은 그대로인데 assertion의 값이 바뀜(`toBe(10)` → `toBe(11)`), `.snap` 파일이나 인라인 스냅샷이 바뀜. 커밋·CI·에이전트 종료 시점에 판정합니다(편집마다 판정하지 않으므로 테스트를 먼저 고치고 코드를 나중에 고쳐도 됩니다). 에이전트가 `-u`로 테스트를 돌리는 것도 막습니다 |
 
 지원 언어: TypeScript/JavaScript(Jest, Vitest, Mocha), Python(pytest, unittest),
 Java(JUnit 4/5).
@@ -297,9 +298,9 @@ node scripts/fp-history.mjs /tmp/flask --commits 300
   클래스로 봅니다. 사용자 지정 `norecursedirs`는 읽지 않습니다. 다른 곳에서 import한 JS 테스트
   함수(`import { it } from './fake'`)와 JS 식별자 안의 유니코드 이스케이프는 잡지 못합니다.
 - **겉모양은 그대로인데 실제로는 아무것도 검사하지 않는 테스트**는 개수가 그대로라 아직 잡지
-  못합니다: 테스트 앞부분의 `return`, `if (false)` 안의
-  테스트, 빈 `it.each([])`, 테스트 대상 모듈을 mock으로 바꾸기, 버그에 맞춰 기대값 바꾸기.
-  문법을 이해하는 분석(계획 중)이 필요합니다.
+  못합니다: 테스트 앞부분의 `return`, `if (false)` 안의 테스트, 빈 `it.each([])`, 테스트 대상
+  모듈을 mock으로 바꾸기. 문법을 이해하는 분석(계획 중)이 필요합니다. 기대값만 바꾼 경우는
+  TG008이 잡지만, 같은 커밋에서 구현도 바뀌었으면 잡지 못합니다.
 - **간접적으로 삼킨 assertion**은 아직 잡지 못합니다: Promise `.catch(() => {})`, `try` 안에서
   호출한 헬퍼 함수 속 assertion. 테스트 스텝을 다른 워크플로 파일로 옮기면 테스트 명령 삭제로
   보고됩니다(한 번 승인하면 됩니다).

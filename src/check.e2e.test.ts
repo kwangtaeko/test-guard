@@ -58,7 +58,8 @@ describe('rule scenarios (worktree mode)', () => {
     ],
     ['TG007/java-throws', [{ ruleId: 'TG007', path: JAVA_TEST, line: 10 }]],
     ['TG007/trivial', [{ ruleId: 'TG007', path: JS_TEST, line: 14 }]],
-    ['TG007/value-change', []],
+    // Values changed while the implementation didn't.
+    ['TG007/value-change', [{ ruleId: 'TG008', path: JS_TEST, line: 5 }]],
     [
       'TG005/package-json',
       [{ ruleId: 'TG005', path: 'package.json', line: 4 }],

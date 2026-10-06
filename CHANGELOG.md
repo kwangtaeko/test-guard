@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- TG008 (new): expected values rewritten to match the code. An assertion
+  whose values changed, or a changed `.snap` file or inline snapshot, while no
+  implementation file changed in the same commit, PR or agent session. Judged
+  at commit, in CI and at Stop, not per edit. Agents are stopped from running
+  `jest -u`, `vitest --update`, `npm test -- -u` or Playwright
+  `--update-snapshots`.
 - TG003: assertions inside a `try` whose `catch` / `except` ignores
   failures no longer count (JS any `catch`; Python bare, `Exception`,
   `BaseException`, `AssertionError`, and `with suppress(…)`; Java

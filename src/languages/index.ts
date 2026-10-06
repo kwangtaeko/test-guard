@@ -31,6 +31,11 @@ export interface Analysis {
 
 const SPECS: Record<Language, LanguageSpec> = { js, python, java };
 
+// Whether a comment/string-stripped line holds an assertion.
+export function isAssertionLine(language: Language, line: string): boolean {
+  return new RegExp(SPECS[language].assertions.source).test(line);
+}
+
 export function toLf(source: string): string {
   return source.replace(/\r\n?/g, '\n');
 }

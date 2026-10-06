@@ -56,3 +56,6 @@ export function guardFileKind(path: string): 'config' | 'hook' | null {
   if (normalized === CONFIG_FILE) return 'config';
   return isHookFile(normalized) ? 'hook' : null;
 }
+
+// Jest/Vitest snapshot files (TG008).
+export const isSnapshot = (path: string) => /\.snap$/.test(path);

@@ -42,6 +42,7 @@ import {
   fileOps,
   findBypass,
   realPath,
+  updatesSnapshots,
 } from './shell.js';
 
 export interface Violation {
@@ -241,6 +242,13 @@ export function checkShell(command: string, cwd: string): Violation[] {
     ruleId: 'TG006',
     message,
   }));
+  if (updatesSnapshots(command, cwd)) {
+    violations.push({
+      ruleId: 'TG008',
+      message:
+        'runs tests with `-u`, which rewrites snapshots to match the current output',
+    });
+  }
   // A trailer written into a file first, then `git commit -F file`.
   for (const file of commitMessageFiles(command, cwd)) {
     if (existsSync(file) && findApproval(readFileSync(file, 'utf8'))) {
