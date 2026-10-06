@@ -1,5 +1,6 @@
 import type { LanguageSpec } from './index.js';
 import { stripPython } from './strip.js';
+import { blankSwallowedPython, reportsFailure } from './swallowed.js';
 
 // unittest assertion methods; a test file that defines or assigns one has
 // replaced the real check.
@@ -102,6 +103,20 @@ export const python: LanguageSpec = {
   tests: countTests,
   assertions:
     /(?<![\w.])assert(?=[\s(])|(?<![\w.])self\.assert\w*\s*\(|(?<![\w.])pytest\.raises\s*\(/g,
+  // A bare `except`, `Exception`, `BaseException` or `AssertionError` that
+  // doesn't raise or fail catches the assertion's failure.
+  unchecked: (code) =>
+    blankSwallowedPython(
+      code,
+      (clause, body) =>
+        (clause === '' ||
+          /\b(?:BaseException|Exception|AssertionError)\b/.test(clause)) &&
+        !reportsFailure(
+          body,
+          /(?<![\w.])(?:raise|assert)\b|\bfail\s*\(|\.fail\w*\s*\(|\.assert\w*\s*\(/,
+          /(?<![\w.])assert\s+(?:True|\w+)\s*$|\bself\.assert(?:True\s*\(\s*True|IsNotNone\s*\(\s*\w+)\s*\)/gm,
+        ),
+    ),
   skips: (code) =>
     new RegExp([...SKIPS, ...importedSkips(code)].join('|'), 'gm'),
 };

@@ -60,7 +60,13 @@ function toRuleInput(
   const path = after?.path ?? before?.path ?? '';
   const beforeLines = before ? splitLines(before.content) : [];
   const afterLines = after ? splitLines(after.content) : [];
-  const runnerConfig = ctx.excluded(path) ? null : runnerConfigKind(path);
+  // A workflow renamed away (`ci.yml` → `ci.yml.off`) is judged as one.
+  const runnerConfig = ctx.excluded(path)
+    ? null
+    : (runnerConfigKind(path) ??
+      (before && runnerConfigKind(before.path) === 'workflow'
+        ? 'workflow'
+        : null));
   return {
     before:
       before && beforeLang

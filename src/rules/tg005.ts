@@ -1,4 +1,5 @@
 import type { RunnerConfig } from '../watched.js';
+import { yamlBlock } from './tg006.js';
 import type { Rule, RuleFinding } from './types.js';
 
 // Test runner configuration tampering (ROADMAP §3.2). MVP: an added or changed
@@ -55,7 +56,7 @@ const TOKENS: Record<RunnerConfig, Token[]> = {
     },
     // A marker filter; `python -m pytest` in tox.ini is not one.
     {
-      re: /(?<!\bpy(?:thon)?[\d.]*\s*)(?:^|[\s"'=[,])-m(?=[\s"'=]|$)/,
+      re: /(?<!\b(?:py(?:thon)?[\d.]*|coverage\s+run)\s*)(?:^|[\s"'=[,])-m(?=[\s"'=]|$)/,
       label: '-m',
     },
     { re: /--co\b|--collect-only\b/, label: '--collect-only' },
@@ -116,7 +117,138 @@ const TOKENS: Record<RunnerConfig, Token[]> = {
       'excludedTaskNames',
     ].map(word),
   ],
+  // Judged per step in `workflowToken`.
+  workflow: [],
 };
+
+// A command that runs tests in a CI step.
+const TEST_COMMAND =
+  /\b(?:npm|pnpm|yarn|bun)\s+(?:run\s+)?test\b|(?<![\w-])(?:jest|vitest|mocha|pytest|tox|nox)\b|\bpython3?\s+-m\s+(?:pytest|unittest)\b|\bnode\s+--test\b|\bmvnw?\b.*\b(?:test|verify|install|package)\b|\bgradlew?\b.*\b(?:test|check|build)\b|\b(?:go|cargo|dotnet)\s+test\b/;
+
+// Added to a test command: makes it unable to fail, or runs fewer tests.
+const UNABLE_TO_FAIL: Token = {
+  re: /\|\|\s*(?:\S*\/)?(?:true|:|exit\s+0|echo)\b|\|\|\s*:\s*$|;\s*exit\s+0\b/,
+  label: '|| true',
+};
+const TEST_STEP: Token[] = [
+  UNABLE_TO_FAIL,
+  ...TOKENS.pytest,
+  ...['testNamePattern', 'testPathIgnorePatterns', 'passWithNoTests'].map(word),
+  {
+    re: /(?:^|\s)(?:-t|--grep|--fgrep|--invert)(?=[\s=]|$)/,
+    label: '-t/--grep',
+  },
+  {
+    re: /--(?:testPathPatterns?|onlyChanged|changedSince|lf|last-failed|exclude|project|filter|skip)\b|(?:^|\s)-(?:run|skip)(?=[\s=])/,
+    label: 'test filter',
+  },
+  {
+    re: /(?:^|\s)(?:-u|--updateSnapshot|--update-snapshots?|--snapshot-update)(?=[\s=]|$)/,
+    label: '-u',
+  },
+  {
+    re: /-D(?:[\w.]*skip\w*|maven\.test\.failure\.ignore|test=|testFailureIgnore)|(?:^|\s)(?:-fn|--fail-never)(?=\s|$)/i,
+    label: '-DskipTests',
+  },
+];
+// Gradle only: pytest's `-x` is fail-fast.
+const GRADLE_EXCLUDE: Token = {
+  re: /(?:\s-x|--exclude-task)\s+\S*test\b|\s--tests\b/i,
+  label: '-x test',
+};
+
+// A condition that never skips the step.
+const ALWAYS_RUNS =
+  /^\s*-?\s*if\s*:\s*(?:\$\{\{\s*)?(?:always\(\)|success\(\)|!\s*cancelled\(\))\s*(?:\}\})?\s*$/;
+const NEVER_RUNS =
+  /^\s*-?\s*if\s*:\s*(?:\$\{\{\s*)?(?:false|0)\s*(?:\}\})?\s*$/;
+
+// The `run: |` block an indented line belongs to.
+function runBlock(lines: string[], index: number): string[] {
+  const indent = (s: string) => s.length - s.trimStart().length;
+  let own = indent(lines[index] ?? '');
+  for (let i = index - 1; i >= 0; i--) {
+    const line = lines[i] ?? '';
+    if (line.trim() === '' || indent(line) >= own) continue;
+    if (!/^\s*-?\s*run\s*:\s*[|>]/.test(line)) {
+      // A less indented script line (a continued command); other keys end it.
+      if (/^\s*-?\s*[\w-]+\s*:/.test(line)) return [];
+      own = indent(line);
+      continue;
+    }
+    const block = [line];
+    for (let j = i + 1; j < lines.length; j++) {
+      const next = lines[j] ?? '';
+      if (next.trim() !== '' && indent(next) <= indent(line)) break;
+      block.push(next);
+    }
+    return block;
+  }
+  return [];
+}
+
+// GitHub Actions: an added line on a step that runs tests.
+function workflowToken(lines: string[], index: number): Token | undefined {
+  // YAML comments aren't commands.
+  const text = (lines[index] ?? '').replace(/(?:^|\s)#.*$/, '');
+  // Lines that run test-guard belong to TG006.
+  if (text.includes('test-guard')) return undefined;
+  const block = () => yamlBlock(lines, index);
+  const runsTests = () =>
+    block().some((l) => TEST_COMMAND.test(l)) &&
+    !block().some((l) => l.includes('test-guard'));
+  const flag = (label: string) => ({ re: /./, label });
+  if (/^\s*-?\s*continue-on-error\s*:\s*(?!false\b)\S/.test(text)) {
+    return runsTests() ? flag('continue-on-error') : undefined;
+  }
+  if (/^\s*-?\s*shell\s*:.*\{0\}/.test(text)) {
+    return runsTests() ? flag('shell: {0}') : undefined;
+  }
+  if (/^\s*-?\s*if\s*:/.test(text)) {
+    if (ALWAYS_RUNS.test(text) || !runsTests()) return undefined;
+    // On a step any condition counts; on a job only one that never runs.
+    return /^\s*-/.test(block()[0] ?? '') || NEVER_RUNS.test(text)
+      ? flag('if:')
+      : undefined;
+  }
+  const command = TEST_COMMAND.exec(text);
+  if (command) {
+    // Flags after the test command (`docker run -t img npm test` is fine).
+    const rest = text.slice(command.index);
+    const tokens = /\bgradlew?\b/.test(text)
+      ? [...TEST_STEP, GRADLE_EXCLUDE]
+      : TEST_STEP;
+    return tokens.find((t) => t.re.test(rest));
+  }
+  // A later line of a multi-line `run:` that runs tests.
+  const script = runBlock(lines, index);
+  if (!script.some((l) => TEST_COMMAND.test(l))) return undefined;
+  // Steps run under `bash -e`, so a later `exit 0` alone changes nothing.
+  if (/^\s*set\s+\+e\b/.test(text)) return flag('set +e');
+  // `npm test \` continued with `|| true`.
+  const previous = lines[index - 1] ?? '';
+  return /\\\s*$/.test(previous) && UNABLE_TO_FAIL.re.test(text)
+    ? UNABLE_TO_FAIL
+    : undefined;
+}
+
+// Test commands that are gone from a workflow (the step deleted, the command
+// replaced, the file deleted or renamed away).
+function removedTestCommands(before: string[], after: string[]): string[] {
+  const commands = (lines: string[]) =>
+    lines
+      .map((l) => l.replace(/(?:^|\s)#.*$/, '').trim())
+      .filter((l) => TEST_COMMAND.test(l) && !l.includes('test-guard'));
+  const left = commands(after);
+  const removed = commands(before).filter((l) => {
+    const i = left.indexOf(l);
+    if (i === -1) return true;
+    left.splice(i, 1);
+    return false;
+  });
+  // A command changed in place (new flags) still runs tests.
+  return removed.slice(left.length);
+}
 
 const TEST_SCRIPT = /"test(?::[^"]*)?"\s*:/;
 
@@ -160,14 +292,28 @@ export const tg005: Rule = ({
   hunks,
   addedToExistingDir,
 }) => {
-  if (!runnerConfig || !afterPath) return [];
-  if (!beforePath && !addedToExistingDir) return [];
   const findings: RuleFinding[] = [];
+  const path = afterPath ?? beforePath;
+  if (runnerConfig === 'workflow' && beforePath && path) {
+    const [removed] = removedTestCommands(beforeLines, afterLines);
+    if (removed) {
+      findings.push({
+        ruleId: 'TG005',
+        path,
+        message: `removed test command \`${removed}\` from CI`,
+      });
+    }
+  }
+  if (!runnerConfig || !afterPath) return findings;
+  if (!beforePath && !addedToExistingDir) return findings;
   for (const line of hunks.flatMap((hunk) => hunk.added)) {
     const text = afterLines[line - 1] ?? '';
-    const token = outOfScope(runnerConfig, afterLines, line - 1)
-      ? undefined
-      : TOKENS[runnerConfig].find((t) => t.re.test(text));
+    const token =
+      runnerConfig === 'workflow'
+        ? workflowToken(afterLines, line - 1)
+        : outOfScope(runnerConfig, afterLines, line - 1)
+          ? undefined
+          : TOKENS[runnerConfig].find((t) => t.re.test(text));
     // A brand-new package.json naturally has a "test" script, and a new
     // `test:*` script next to the old ones changes nothing that ran.
     // A comma added after a sibling is no change either.

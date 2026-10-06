@@ -162,7 +162,7 @@ function agentHooks(
 const indent = (s: string) => s.length - s.trimStart().length;
 
 // The YAML block (step or job) that line `index` belongs to.
-function yamlBlock(lines: string[], index: number): string[] {
+export function yamlBlock(lines: string[], index: number): string[] {
   const line = lines[index] ?? '';
   const own = indent(line.replace(/-\s*/, (m) => ' '.repeat(m.length)));
   let start = index;

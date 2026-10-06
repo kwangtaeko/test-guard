@@ -1,5 +1,6 @@
 import type { LanguageSpec } from './index.js';
 import { stripJava } from './strip.js';
+import { blankSwallowedBraces, reportsFailure } from './swallowed.js';
 
 // JUnit assertion methods; a test file that declares one has replaced the
 // real check.
@@ -58,6 +59,21 @@ export const java: LanguageSpec = {
   tests: countTests,
   // A leading `.` is allowed: `Assertions.assertEquals(`.
   assertions: /(?<![\w$])(?:assert\w*|fail)\s*\(/g,
+  // Assertion failures are `AssertionError`s: `catch (Exception e)` lets them
+  // through, `Throwable`/`Error`/`AssertionError` without a rethrow doesn't.
+  unchecked: (code) =>
+    blankSwallowedBraces(
+      code,
+      (clause, body) =>
+        /\b(?:Throwable|Error|AssertionError|AssertionFailedError|ComparisonFailure)\b/.test(
+          clause,
+        ) &&
+        !reportsFailure(
+          body,
+          /(?<![\w$])(?:throw\b|fail\s*\(|assert\w*\s*\()/,
+          /(?<![\w$])assert(?:True\s*\(\s*true|NotNull\s*\(\s*[\w$]+)\s*\)/g,
+        ),
+    ),
   skips: new RegExp(
     [
       '@(?:[\\w$]+\\.)*(?:Disabled\\w*|Enabled\\w*|Ignore)\\b',

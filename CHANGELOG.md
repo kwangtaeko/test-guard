@@ -1,5 +1,22 @@
 # Changelog
 
+## Unreleased
+
+- TG003: assertions inside a `try` whose `catch` / `except` ignores
+  failures no longer count (JS any `catch`; Python bare, `Exception`,
+  `BaseException`, `AssertionError`, and `with suppress(…)`; Java
+  `Throwable`, `Error`, `AssertionError`), unless the handler rethrows, fails,
+  checks the error or collects it. Checks that always pass
+  (`expect(e).toBeDefined()`, `assertTrue(true)`, `done()`) don't count as
+  checking. The message says how many were swallowed.
+- TG005: GitHub Actions steps that run tests: added `|| true` / `; exit 0`,
+  `set +e`, `shell: bash {0}`, `continue-on-error`, a step-level `if:` (not
+  `always()` / `!cancelled()`), a job-level `if: false`, `-u`, or a test
+  filter (`-k`, `-t`, `--testNamePattern`, `--testPathPattern`, `-run`,
+  `-DskipTests`, `-x test`, …); a test command removed from a workflow (the
+  step deleted or replaced, the file deleted or renamed away).
+- `prepublishOnly` builds before `npm publish`.
+
 ## 0.1.1 - 2026-10-06
 
 Hardening after a red-team review: each of these got past 0.1.0.

@@ -126,9 +126,9 @@ git commit -m "test: skip flaky subtraction" -m "Test-Guard-Approved: tracked in
 |---|---|
 | TG001 | A test file deleted, or moved to a path that is not a test (including folders pytest skips, such as `build/`, `dist/`, `.*`, `venv/`) |
 | TG002 | Fewer test cases in a file (Python: only tests pytest/unittest collect, a name defined twice counts once; Java: tests in an inner class that lost `@Nested`) |
-| TG003 | Fewer assertions in a file |
+| TG003 | Fewer assertions in a file (assertions inside a `try` whose `catch`/`except` ignores failures don't count) |
 | TG004 | Added skip / disable / focus: `it.skip`, `xit`, `.only`, `.todo`, `test.failing`, `{ skip: true }`, `this.skip()`, `@pytest.mark.skip` (also under import aliases), `xfail`, `__test__ = False`, `@Disabled`, `@Ignore`, `Assumptions.abort()`, TestNG `enabled = false`, … — and test or assertion functions replaced in the file (`const expect = …`, `expect.extend` over a built-in matcher, a local `assertEquals`, a `Test` annotation that isn't JUnit's) |
-| TG005 | Test runner config tampering: `passWithNoTests`, `testPathIgnorePatterns`, `setupFiles`/`globalSetup`, pytest `addopts` with `-k`/`--deselect`/`--ignore`, `collect_ignore`, `pytest_*` hooks in `conftest.py`, Maven `skipTests`/`testFailureIgnore`/`groups`/`includes`, Gradle `enabled = false`/`ignoreFailures`/`excludeTags`, … |
+| TG005 | Test runner config tampering: `passWithNoTests`, `testPathIgnorePatterns`, `setupFiles`/`globalSetup`, pytest `addopts` with `-k`/`--deselect`/`--ignore`, `collect_ignore`, `pytest_*` hooks in `conftest.py`, Maven `skipTests`/`testFailureIgnore`/`groups`/`includes`, Gradle `enabled = false`/`ignoreFailures`/`excludeTags`; a GitHub Actions test step given `\|\| true`, `set +e`, `continue-on-error`, `if:`, `-u` or a test filter, or a test command removed from CI, … |
 | TG006 | Getting around test-guard: changing `.test-guard.json`; removing or changing the line that runs it in hook/CI files (`\|\| true`, a narrower hook matcher, `continue-on-error`); from an agent: `git commit --no-verify`, `core.hooksPath`, git aliases/includes/`GIT_CONFIG_GLOBAL`, `Test-Guard-Approved` trailers, `TEST_GUARD_*` variables, disabling or uninstalling the plugin, and writing `.git/`, `.claude/settings.local.json` or `node_modules/test-guard` |
 | TG007 | Weaker assertions: `toBe(3)` → `toBeDefined()` / `not.toBe(…)` / `toBeGreaterThan(…)`, `assertEqual` → `assertTrue` / `assertNotEqual`, `assert x == y` → `assert x != y`, `toThrow(X)` → `toThrow()`, `pytest.raises(ValueError)` → `pytest.raises(Exception)`, and meaningless ones like `expect(true).toBe(true)` |
 
@@ -285,10 +285,14 @@ repos:
   functions imported from somewhere else (`import { it } from './fake'`) and
   unicode escapes in JS identifiers aren't detected.
 - **Tests that still look intact but no longer check anything** keep their
-  counts, so they aren't detected yet: an early `return`, assertions wrapped in
-  `try { … } catch {}`, a test inside `if (false)`, an empty `it.each([])`,
+  counts, so they aren't detected yet: an early `return`, a test inside
+  `if (false)`, an empty `it.each([])`,
   mocking the module under test, or changing expected values to match a bug.
   These need syntax-aware analysis (planned).
+- **Assertions swallowed indirectly** aren't seen yet: a promise
+  `.catch(() => {})`, or an assertion in a helper function called inside the
+  `try`. Moving a test step from one workflow file to another is reported as
+  a removed test command (approve it once).
 - **Not yet**: C#, Go, Rust, other agents.
 
 ## License

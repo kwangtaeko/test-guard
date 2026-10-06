@@ -231,3 +231,154 @@ describe('java', () => {
     );
   });
 });
+
+describe('assertions inside a try that swallows failures', () => {
+  const counts = (path: string, source: string) => {
+    const { stats, swallowed } = analyze(path, source);
+    return [stats.assertions, swallowed];
+  };
+
+  it.each([
+    [
+      'a.test.js',
+      "it('a', () => {\n  try {\n    expect(f()).toBe(1);\n  } catch (e) {}\n});\n",
+    ],
+    [
+      'a.test.js',
+      "it('a', () => {\n  try { expect(f()).toBe(1) } catch { console.log('x') }\n});\n",
+    ],
+    [
+      'a.test.ts',
+      "it('a', async () => {\n  try {\n    try { expect(1).toBe(2) } finally {}\n  } catch (_) {\n    // ignore\n  }\n});\n",
+    ],
+    [
+      'test_a.py',
+      'def test_a():\n    try:\n        assert f() == 1\n    except:\n        pass\n',
+    ],
+    [
+      'test_a.py',
+      'def test_a():\n    try:\n        assert f() == 1\n    except (ValueError, AssertionError) as e:\n        print(e)\n',
+    ],
+    [
+      'test_a.py',
+      'class TestA:\n    def test_a(self):\n        try: assert f() == 1\n        except Exception: pass\n',
+    ],
+    [
+      'src/test/java/ATest.java',
+      'class ATest {\n  @Test void a() {\n    try {\n      assertEquals(1, f());\n    } catch (AssertionError e) {\n    }\n  }\n}\n',
+    ],
+    [
+      'src/test/java/ATest.java',
+      'class ATest {\n  @Test void a() {\n    try (var r = open()) {\n      assertEquals(1, f());\n    } catch (IOException | Throwable e) { log(e); }\n  }\n}\n',
+    ],
+  ])('%s: not counted (%#)', (path, source) => {
+    expect(counts(path, source)).toEqual([0, 1]);
+  });
+
+  it.each([
+    // The handler fails the test or checks the error.
+    [
+      'a.test.js',
+      "it('a', () => {\n  try { f() } catch (e) { expect(e.message).toBe('x') }\n});\n",
+    ],
+    [
+      'a.test.js',
+      "it('a', () => {\n  try { expect(f()).toBe(1) } catch (e) { throw e }\n});\n",
+    ],
+    [
+      'a.test.js',
+      "it('a', () => {\n  try { expect(f()).toBe(1) } finally { done() }\n});\n",
+    ],
+    // The handler can't see assertion failures.
+    [
+      'test_a.py',
+      'def test_a():\n    try:\n        assert f() == 1\n    except ValueError:\n        pass\n',
+    ],
+    [
+      'test_a.py',
+      'def test_a():\n    try:\n        assert f() == 1\n    except Exception:\n        raise\n',
+    ],
+    [
+      'src/test/java/ATest.java',
+      'class ATest {\n  @Test void a() {\n    try {\n      assertEquals(1, f());\n    } catch (Exception e) {\n    }\n  }\n}\n',
+    ],
+    [
+      'src/test/java/ATest.java',
+      'class ATest {\n  @Test void a() {\n    try {\n      assertEquals(1, f());\n    } catch (Throwable t) {\n      fail(t);\n    }\n  }\n}\n',
+    ],
+  ])('%s: still counted (%#)', (path, source) => {
+    const [assertions, swallowed] = counts(path, source);
+    expect(swallowed).toBe(0);
+    expect(assertions).toBeGreaterThan(0);
+  });
+});
+
+describe('swallowed assertions, red-team re-check', () => {
+  const swallowed = (path: string, source: string) =>
+    analyze(path, source).swallowed;
+
+  it.each([
+    // A handler whose check always passes.
+    [
+      'a.test.js',
+      "it('a', () => {\n  try { expect(f()).toBe(1) } catch (e) { expect(e).toBeDefined() }\n});\n",
+    ],
+    [
+      'a.test.js',
+      "it('a', (done) => {\n  try { expect(f()).toBe(1) } catch (e) { done() }\n});\n",
+    ],
+    [
+      'src/test/java/ATest.java',
+      'class ATest {\n  @Test void a() {\n    try { assertEquals(1, f()); } catch (Throwable t) { assertTrue(true); }\n  }\n}\n',
+    ],
+    [
+      'src/test/java/ATest.java',
+      'class ATest {\n  @Test void a() {\n    try { assertEquals(1, f()); } catch (Throwable t) { assertionErrors = t; }\n  }\n}\n',
+    ],
+    [
+      'test_a.py',
+      'from contextlib import suppress\n\ndef test_a():\n    with suppress(AssertionError):\n        assert f() == 1\n',
+    ],
+    [
+      'test_a.py',
+      'import contextlib\n\ndef test_a():\n    with contextlib.suppress(Exception): assert f() == 1\n',
+    ],
+  ])('%s: swallowed (%#)', (path, source) => {
+    expect(swallowed(path, source)).toBe(1);
+  });
+
+  it.each([
+    // The handler collects the error for a later assertion.
+    [
+      'a.test.js',
+      "it('a', () => {\n  const errors = [];\n  try { expect(f()).toBe(1) } catch (e) { errors.push(e) }\n  expect(errors).toEqual([]);\n});\n",
+    ],
+    [
+      'test_a.py',
+      'def test_a():\n    errors = []\n    try:\n        assert f() == 1\n    except AssertionError as e:\n        errors.append(e)\n    assert not errors\n',
+    ],
+    // Other assertion styles in the handler.
+    [
+      'a.test.js',
+      "test('a', (t) => {\n  try { assert.ok(f()) } catch (e) { t.is(e.code, 'X') }\n});\n",
+    ],
+    [
+      'a.test.js',
+      "it('a', () => {\n  try { expect(f()).to.equal(1) } catch (e) { e.should.be.instanceOf(TypeError) }\n});\n",
+    ],
+    [
+      'a.test.js',
+      "it('a', (done) => {\n  try { expect(f()).toBe(1); done() } catch (e) { done(e) }\n});\n",
+    ],
+    [
+      'test_a.py',
+      'class TestA(unittest.TestCase):\n    def test_a(self):\n        try:\n            self.assertEqual(f(), 1)\n        except Exception as e:\n            self.assertIsInstance(e, KeyError)\n',
+    ],
+    [
+      'test_a.py',
+      'def test_a():\n    with suppress(KeyError):\n        assert f() == 1\n',
+    ],
+  ])('%s: still counted (%#)', (path, source) => {
+    expect(swallowed(path, source)).toBe(0);
+  });
+});

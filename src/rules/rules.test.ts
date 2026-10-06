@@ -857,3 +857,190 @@ describe('TG006', () => {
     ).toEqual([]);
   });
 });
+
+describe('M7: failures that can no longer fail', () => {
+  it('TG003 names assertions wrapped in a try/catch that ignores failures', () => {
+    expect(
+      check({
+        before: file('a.test.js', ...JS_BEFORE),
+        after: file(
+          'a.test.js',
+          "it('adds', () => {",
+          '  try {',
+          '    expect(add(1, 2)).toBe(3);',
+          '  } catch {}',
+          '  expect(add(2, 2)).toBe(4);',
+          '});',
+          ...JS_BEFORE.slice(4),
+        ),
+      }).map((f) => f.message),
+    ).toEqual([
+      'assertions 3 → 2 (1 inside a try/catch that ignores failures)',
+    ]);
+  });
+
+  const workflow = (from: string[], to: string[]) =>
+    check({
+      before: file('.github/workflows/ci.yml', ...from),
+      after: file('.github/workflows/ci.yml', ...to),
+    }).map((f) => [f.ruleId, f.message]);
+  const STEPS = [
+    'jobs:',
+    '  test:',
+    '    runs-on: ubuntu-latest',
+    '    steps:',
+    '      - uses: actions/checkout@v4',
+    '      - name: Test',
+    '        run: npm test',
+  ];
+
+  it.each([
+    ['        run: npm test || true', '|| true'],
+    ['        run: pnpm test; exit 0', '|| true'],
+    ['        run: pytest -k "not slow"', '-k'],
+    ['        run: npx vitest run --testNamePattern add', 'testNamePattern'],
+    ['        run: ./mvnw -DskipTests verify', '-DskipTests'],
+    ['        run: ./gradlew build -x test', '-x test'],
+  ])('reports `%s`', (line, label) => {
+    expect(workflow(STEPS, [...STEPS.slice(0, -1), line])).toEqual([
+      ['TG005', `added \`${label}\``],
+    ]);
+  });
+
+  it('reports continue-on-error and if: on a test step', () => {
+    expect(
+      workflow(STEPS, [
+        ...STEPS.slice(0, -2),
+        '      - name: Test',
+        '        if: false',
+        '        continue-on-error: true',
+        '        run: npm test',
+      ]),
+    ).toEqual([
+      ['TG005', 'added `if:`'],
+      ['TG005', 'added `continue-on-error`'],
+    ]);
+  });
+
+  it.each([
+    // Not a test step.
+    [['      - run: npm run lint || true']],
+    [
+      [
+        '      - name: Lint',
+        '        continue-on-error: true',
+        '        run: npm run lint',
+      ],
+    ],
+    // A job-level condition, a new test step, a version bump.
+    [['      - run: npm run build', '      - run: npm test -- --coverage']],
+    [
+      [
+        '      - name: Deploy',
+        "        if: github.ref == 'refs/heads/main'",
+        '        run: ./deploy.sh',
+      ],
+    ],
+  ])('accepts %j', (extra) => {
+    expect(workflow(STEPS, [...STEPS, ...extra])).toEqual([]);
+  });
+
+  it('accepts a job-level if: and an action version bump', () => {
+    expect(
+      workflow(STEPS, [
+        'jobs:',
+        '  test:',
+        "    if: github.event_name == 'pull_request'",
+        '    runs-on: ubuntu-latest',
+        '    steps:',
+        '      - uses: actions/checkout@v5',
+        '      - name: Test',
+        '        run: npm test',
+      ]),
+    ).toEqual([]);
+  });
+});
+
+describe('M7 workflow checks, red-team re-check', () => {
+  const STEPS = [
+    'jobs:',
+    '  test:',
+    '    runs-on: ubuntu-latest',
+    '    steps:',
+    '      - uses: actions/checkout@v4',
+    '      - name: Test',
+    '        run: npm test',
+  ];
+  const workflow = (to: string[] | null, path = '.github/workflows/ci.yml') =>
+    check({
+      before: file('.github/workflows/ci.yml', ...STEPS),
+      after: to && file(path, ...to),
+    }).map((f) => [f.ruleId, f.message]);
+  const REMOVED = [['TG005', 'removed test command `run: npm test` from CI']];
+
+  it('reports a removed test step, a replaced command, a deleted or renamed file', () => {
+    expect(workflow(STEPS.slice(0, -2))).toEqual(REMOVED);
+    expect(
+      workflow([...STEPS.slice(0, -1), '        run: npm run lint']),
+    ).toEqual(REMOVED);
+    expect(workflow(null)).toEqual(REMOVED);
+    expect(workflow(STEPS, '.github/workflows/ci.yml.off')).toEqual(REMOVED);
+  });
+
+  it.each([
+    [['        run: |', '          set +e', '          npm test'], 'set +e'],
+    [
+      ['        run: |', '          npm test \\', '            || true'],
+      '|| true',
+    ],
+    [['        shell: bash {0}', '        run: npm test'], 'shell: {0}'],
+    [['        run: npm test -- -u'], '-u'],
+    [['        run: npx jest --testPathPattern unit'], 'test filter'],
+    [['        run: go test -run TestAdd ./...'], 'test filter'],
+    [
+      ['        run: mvn -Dmaven.test.failure.ignore=true verify'],
+      '-DskipTests',
+    ],
+    [['        run: ./gradlew check -x integrationTest'], '-x test'],
+    [['        run: npm test || /bin/true'], '|| true'],
+  ])('reports %j', (lines, label) => {
+    expect(workflow([...STEPS.slice(0, -1), ...lines]).at(-1)).toEqual([
+      'TG005',
+      `added \`${label}\``,
+    ]);
+  });
+
+  it('reports a job-level if: false on a test job', () => {
+    expect(
+      workflow([...STEPS.slice(0, 2), '    if: false', ...STEPS.slice(2)]),
+    ).toEqual([['TG005', 'added `if:`']]);
+  });
+
+  it.each([
+    [['        run: coverage run -m pytest']],
+    [['        run: python -m pytest -x tests/']],
+    [['        if: always()', '        run: npm test']],
+    // biome-ignore lint/suspicious/noTemplateCurlyInString: GitHub Actions expression
+    [['        if: ${{ !cancelled() }}', '        run: npm test']],
+    [['        run: docker run -t img npm test']],
+    [['        run: npm test # never add || true here']],
+    [
+      [
+        '        run: |',
+        '          npm ci',
+        '          npm test',
+        '          exit 0',
+      ],
+    ],
+    [
+      [
+        '        run: |',
+        '          npm test',
+        '          curl -k https://example.com || true',
+      ],
+    ],
+    [['        run: npm test -- --coverage']],
+  ])('accepts %j', (lines) => {
+    expect(workflow([...STEPS.slice(0, -1), ...lines])).toEqual([]);
+  });
+});

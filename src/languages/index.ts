@@ -10,6 +10,9 @@ export interface LanguageSpec {
   // A function when counting needs more than a pattern (scopes, duplicates).
   tests: RegExp | ((code: string) => number);
   assertions: RegExp;
+  // Blanks code whose assertions can't fail the test (a `try` whose handler
+  // swallows the failure).
+  unchecked?: (code: string) => string;
   // A function when the pattern depends on the file (imported aliases).
   skips: RegExp | ((code: string) => RegExp);
 }
@@ -23,6 +26,7 @@ export interface Analysis {
   stats: FileStats;
   lines: string[]; // stripped lines, same numbering as the source
   skips: SkipMatch[];
+  swallowed: number; // assertions left out of stats because failures are caught
 }
 
 const SPECS: Record<Language, LanguageSpec> = { js, python, java };
@@ -40,6 +44,7 @@ export function analyzeSource(
   const code = spec.strip(toLf(source));
   const skips =
     typeof spec.skips === 'function' ? spec.skips(code) : spec.skips;
+  const assertions = count(spec.unchecked?.(code) ?? code, spec.assertions);
   return {
     stats: {
       path: normalizePath(path),
@@ -48,11 +53,12 @@ export function analyzeSource(
         typeof spec.tests === 'function'
           ? spec.tests(code)
           : count(code, spec.tests),
-      assertions: count(code, spec.assertions),
+      assertions,
       skips: count(code, skips),
     },
     lines: code.split('\n'),
     skips: findMatches(code, skips),
+    swallowed: count(code, spec.assertions) - assertions,
   };
 }
 

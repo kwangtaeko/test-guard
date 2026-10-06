@@ -13,10 +13,13 @@ export type RunnerConfig =
   | 'pytest'
   | 'conftest'
   | 'maven'
-  | 'gradle';
+  | 'gradle'
+  | 'workflow';
 
 export function runnerConfigKind(path: string): RunnerConfig | null {
-  const name = normalizePath(path).split('/').pop() ?? '';
+  const normalized = normalizePath(path);
+  if (/^\.github\/workflows\/[^/]+\.ya?ml$/.test(normalized)) return 'workflow';
+  const name = normalized.split('/').pop() ?? '';
   if (name === 'package.json') return 'package.json';
   if (/^jest\.config\.(?:[cm]?[jt]s|json)$/.test(name)) return 'jest';
   if (/^vitest\.(?:config|workspace)\.[cm]?[jt]s$/.test(name)) {
