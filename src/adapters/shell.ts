@@ -823,6 +823,10 @@ export function fileOps(command: string, cwd: string): FileOp[] {
       }
       return;
     }
+    // PowerShell cmdlets take `\` as a separator on every OS.
+    if (/^[a-z]+-[a-z]+$/.test(verb)) {
+      args = args.map((a) => a.replace(/\\/g, '/'));
+    }
     const named = (name: string) => {
       const i = args.findIndex((a) => new RegExp(`^-${name}$`, 'i').test(a));
       if (i !== -1) return args[i + 1];
