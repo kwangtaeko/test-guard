@@ -1,6 +1,10 @@
 # Changelog
 
-## Unreleased
+## 0.2.0 - 2026-10-07
+
+Expected-value overwrites (TG008), swallowed assertions and CI test steps,
+false positives measured on 1,200 real commits, and an outcome benchmark
+with Claude Code and Codex.
 
 - Agent hooks: read-only `find` (without `-delete`/`-exec`) and shell
   wrappers such as `powershell -Command "Get-Content …"` are no longer
