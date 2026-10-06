@@ -123,9 +123,9 @@ describe('js skips', () => {
     ["test('a', ({ skip }) => { skip(); });", 'skip'],
     ["test.failing('a', () => {});", 'test.failing'],
     ['const expect = () => ({ toBe() {} });', 'const expect = () =>'],
-    ['function it(name, fn) {}', 'function it'],
+    ["function it(name, fn) {}\nit('a', () => {});", 'function it'],
     ['globalThis.expect = () => ({});', 'globalThis.expect ='],
-    ['test = () => {};', 'test ='],
+    ["test = () => {};\ntest('a', () => {});", 'test ='],
     ['expect.extend({\n  toBe() { return { pass: true }; },\n});', 'toBe'],
     ["it('a', (c) => { c.skip(); });", 'c.skip'],
     [
@@ -145,6 +145,8 @@ describe('js skips', () => {
     'const test = base.extend({ page: async ({}, use) => use(1) });',
     'expect.extend({\n  toBeWithinRange(x) { return { pass: true }; },\n});',
     "it('a', () => { expect(x).toBe(1); });",
+    // A helper named like a runner the file never calls with a title.
+    "function describe(value) { return JSON.stringify(value); }\nit('a', () => { describe(x); });",
   ])('leaves %s alone', (source) => {
     expect(stats('a.test.js', source).skips).toBe(0);
   });

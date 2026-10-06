@@ -1,5 +1,5 @@
 import type { RunnerConfig } from '../watched.js';
-import { yamlBlock } from './tg006.js';
+import { yamlBlock, yamlBlockRange } from './tg006.js';
 import type { Rule, RuleFinding } from './types.js';
 
 // Test runner configuration tampering (ROADMAP §3.2). MVP: an added or changed
@@ -56,7 +56,7 @@ const TOKENS: Record<RunnerConfig, Token[]> = {
     },
     // A marker filter; `python -m pytest` in tox.ini is not one.
     {
-      re: /(?<!\b(?:py(?:thon)?[\d.]*|coverage\s+run)\s*)(?:^|[\s"'=[,])-m(?=[\s"'=]|$)/,
+      re: /(?<!\b(?:py(?:thon)?[\d.]*|coverage\s+run(?:\s+-{1,2}[\w-]+)*)\s*)(?:^|[\s"'=[,])-m(?=[\s"'=]|$)/,
       label: '-m',
     },
     { re: /--co\b|--collect-only\b/, label: '--collect-only' },
@@ -121,9 +121,18 @@ const TOKENS: Record<RunnerConfig, Token[]> = {
   workflow: [],
 };
 
-// A command that runs tests in a CI step.
+// A command that runs tests in a CI step. Runner names count only as
+// commands: not `mocha@8` or `tox:` in a matrix, nor `extra-mvn-args`.
 const TEST_COMMAND =
-  /\b(?:npm|pnpm|yarn|bun)\s+(?:run\s+)?test\b|(?<![\w-])(?:jest|vitest|mocha|pytest|tox|nox)\b|\bpython3?\s+-m\s+(?:pytest|unittest)\b|\bnode\s+--test\b|\bmvnw?\b.*\b(?:test|verify|install|package)\b|\bgradlew?\b.*\b(?:test|check|build)\b|\b(?:go|cargo|dotnet)\s+test\b/;
+  /\b(?:npm|pnpm|yarn|bun|nub|deno|turbo|nx|make|just|task)\s+(?:run\s+)?test\b|(?<![\w.@-])(?:jest|vitest|mocha|pytest|tox|nox)(?![\w@.:-])|\bpython3?\s+-m\s+(?:pytest|unittest)\b|\bnode\s+--test\b|(?<![\w@-])(?:\.\/)?mvnw?(?![\w@:-]).*\b(?:test|verify|install|package)\b|(?<![\w@-])(?:\.\/)?gradlew?(?![\w@:-]).*\b(?:test|check|build)\b|\b(?:go|cargo|dotnet)\s+test\b/;
+
+// What the workflow looked like before: its lines, and the ones this change
+// deleted.
+interface Before {
+  lines: string[];
+  deleted: string[];
+  added: Set<number>; // 0-based indices of added lines in the new file
+}
 
 // Added to a test command: makes it unable to fail, or runs fewer tests.
 const UNABLE_TO_FAIL: Token = {
@@ -187,16 +196,38 @@ function runBlock(lines: string[], index: number): string[] {
   return [];
 }
 
-// GitHub Actions: an added line on a step that runs tests.
-function workflowToken(lines: string[], index: number): Token | undefined {
+// GitHub Actions: an added line on a step that already ran tests. A new step
+// or job takes nothing away (`-DskipTests` on a new build step is routine).
+function workflowToken(
+  lines: string[],
+  index: number,
+  before: Before,
+): Token | undefined {
   // YAML comments aren't commands.
   const text = (lines[index] ?? '').replace(/(?:^|\s)#.*$/, '');
   // Lines that run test-guard belong to TG006.
   if (text.includes('test-guard')) return undefined;
+  // A test command that was in the workflow before (anywhere on a line).
+  const existed = (l: string) => {
+    const command = TEST_COMMAND.exec(l)?.[0];
+    return (
+      command !== undefined && before.lines.some((b) => b.includes(command))
+    );
+  };
   const block = () => yamlBlock(lines, index);
-  const runsTests = () =>
-    block().some((l) => TEST_COMMAND.test(l)) &&
-    !block().some((l) => l.includes('test-guard'));
+  // The step or job existed (its first line isn't new, or it replaced a
+  // test command) and runs a test command that was there before.
+  const runsTests = () => {
+    const [start] = yamlBlockRange(lines, index);
+    const old =
+      !before.added.has(start) ||
+      before.deleted.some((l) => TEST_COMMAND.test(l));
+    return (
+      old &&
+      block().some((l) => TEST_COMMAND.test(l) && existed(l)) &&
+      !block().some((l) => l.includes('test-guard'))
+    );
+  };
   const flag = (label: string) => ({ re: /./, label });
   if (/^\s*-?\s*continue-on-error\s*:\s*(?!false\b)\S/.test(text)) {
     return runsTests() ? flag('continue-on-error') : undefined;
@@ -213,16 +244,21 @@ function workflowToken(lines: string[], index: number): Token | undefined {
   }
   const command = TEST_COMMAND.exec(text);
   if (command) {
+    // The test command this change replaced; none means a new step.
+    const previous = before.deleted.filter((l) => TEST_COMMAND.test(l));
+    if (previous.length === 0) return undefined;
     // Flags after the test command (`docker run -t img npm test` is fine).
     const rest = text.slice(command.index);
     const tokens = /\bgradlew?\b/.test(text)
       ? [...TEST_STEP, GRADLE_EXCLUDE]
       : TEST_STEP;
-    return tokens.find((t) => t.re.test(rest));
+    return tokens.find(
+      (t) => t.re.test(rest) && !previous.some((l) => t.re.test(l)),
+    );
   }
-  // A later line of a multi-line `run:` that runs tests.
+  // A later line of a multi-line `run:` that ran tests.
   const script = runBlock(lines, index);
-  if (!script.some((l) => TEST_COMMAND.test(l))) return undefined;
+  if (!script.some((l) => TEST_COMMAND.test(l) && existed(l))) return undefined;
   // Steps run under `bash -e`, so a later `exit 0` alone changes nothing.
   if (/^\s*set\s+\+e\b/.test(text)) return flag('set +e');
   // `npm test \` continued with `|| true`.
@@ -276,11 +312,38 @@ function outOfScope(
     for (let i = index; i >= 0; i--) {
       const line = lines[i] ?? '';
       if (/<\/?(?:testR|r)esources?>|<configuration>|<\/build>/.test(line)) {
-        return /<(?:testR|r)esources?>/.test(line);
+        if (/<(?:testR|r)esources?>/.test(line)) return true;
+        break;
       }
     }
+    // Inside a plugin, only the test plugins' settings pick tests (`<skip>`
+    // on gpg or deploy is routine).
+    const plugin = enclosingPlugin(lines, index);
+    return plugin !== null && !/surefire|failsafe/.test(plugin);
   }
   return false;
+}
+
+// The artifactId of the Maven `<plugin>` a line is in, or null outside one.
+function enclosingPlugin(lines: string[], index: number): string | null {
+  let depth = 0;
+  for (let i = index; i >= 0; i--) {
+    const line = lines[i] ?? '';
+    if (/<\/plugin>/.test(line) && i !== index) depth++;
+    if (/<plugin>/.test(line)) {
+      if (depth > 0) {
+        depth--;
+        continue;
+      }
+      for (let j = i; j <= index; j++) {
+        const id = /<artifactId>([^<]*)<\/artifactId>/.exec(lines[j] ?? '');
+        if (id) return id[1] ?? '';
+      }
+      return '';
+    }
+    if (/<\/?plugins>/.test(line)) return null;
+  }
+  return null;
 }
 
 export const tg005: Rule = ({
@@ -306,11 +369,18 @@ export const tg005: Rule = ({
   }
   if (!runnerConfig || !afterPath) return findings;
   if (!beforePath && !addedToExistingDir) return findings;
+  const before: Before = {
+    lines: beforeLines,
+    added: new Set(hunks.flatMap((hunk) => hunk.added.map((line) => line - 1))),
+    deleted: hunks.flatMap((hunk) =>
+      hunk.deleted.map((line) => beforeLines[line - 1] ?? ''),
+    ),
+  };
   for (const line of hunks.flatMap((hunk) => hunk.added)) {
     const text = afterLines[line - 1] ?? '';
     const token =
       runnerConfig === 'workflow'
-        ? workflowToken(afterLines, line - 1)
+        ? workflowToken(afterLines, line - 1, before)
         : outOfScope(runnerConfig, afterLines, line - 1)
           ? undefined
           : TOKENS[runnerConfig].find((t) => t.re.test(text));

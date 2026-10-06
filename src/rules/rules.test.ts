@@ -1044,3 +1044,135 @@ describe('M7 workflow checks, red-team re-check', () => {
     expect(workflow([...STEPS.slice(0, -1), ...lines])).toEqual([]);
   });
 });
+
+describe('M8: false positives found in real history', () => {
+  const change = (path: string, from: string[], to: string[]) =>
+    check({ before: file(path, ...from), after: file(path, ...to) }).map(
+      (f) => [f.ruleId, f.message],
+    );
+  const STEPS = [
+    'jobs:',
+    '  test:',
+    '    steps:',
+    '      - name: Test',
+    '        run: npm test',
+  ];
+  const ci = (to: string[]) => change('.github/workflows/ci.yml', STEPS, to);
+
+  it.each([
+    // Matrix values that name a runner aren't commands.
+    [
+      [
+        ...STEPS,
+        '    strategy:',
+        '      matrix:',
+        '        npm-i: [mocha@8.4.0]',
+      ],
+      STEPS,
+    ],
+    [
+      [
+        ...STEPS,
+        '        with:',
+        "          extra-mvn-args: --projects '!test-shrinker'",
+      ],
+      STEPS,
+    ],
+    [[...STEPS, '      - {name: Range, tox: devel}'], STEPS],
+  ])('accepts removing a matrix value %#', (from, to) => {
+    expect(change('.github/workflows/ci.yml', from, to)).toEqual([]);
+  });
+
+  it('accepts a new build step or job that skips tests', () => {
+    expect(
+      ci([
+        ...STEPS,
+        '      - run: mvn package -DskipTests',
+        '  api:',
+        '    continue-on-error: true',
+        '    steps:',
+        "      - if: github.event_name == 'push'",
+        '        run: npm test',
+      ]),
+    ).toEqual([]);
+  });
+
+  it('accepts a renamed runner (nub run test)', () => {
+    expect(ci([...STEPS.slice(0, -1), '        run: nub run test'])).toEqual(
+      [],
+    );
+  });
+
+  it('still reports skipTests added to an existing test command', () => {
+    expect(
+      change(
+        '.github/workflows/ci.yml',
+        ['    steps:', '      - run: ./mvnw verify'],
+        ['    steps:', '      - run: ./mvnw verify -DskipTests'],
+      ),
+    ).toEqual([['TG005', 'added `-DskipTests`']]);
+  });
+
+  const POM = (config: string) => [
+    '<project><build><plugins>',
+    '  <plugin>',
+    '    <artifactId>maven-gpg-plugin</artifactId>',
+    '    <configuration>',
+    '      <skip>false</skip>',
+    '    </configuration>',
+    '  </plugin>',
+    '  <plugin>',
+    '    <artifactId>maven-surefire-plugin</artifactId>',
+    '    <configuration>',
+    config,
+    '    </configuration>',
+    '  </plugin>',
+    '</plugins></build></project>',
+  ];
+
+  it('judges Maven <skip> only on the test plugins', () => {
+    const before = POM('');
+    const gpg = before.map((l) => l.replace('<skip>false', '<skip>true'));
+    expect(
+      change(
+        'pom.xml',
+        before.filter((l) => !l.includes('<skip>')),
+        before,
+      ),
+    ).toEqual([]);
+    expect(change('pom.xml', before, gpg)).toEqual([]);
+    expect(change('pom.xml', before, POM('      <skip>true</skip>'))).toEqual([
+      ['TG005', 'added `<skip>`'],
+    ]);
+  });
+
+  it('accepts coverage run -p -m pytest', () => {
+    expect(
+      change(
+        'tox.ini',
+        ['[testenv]', 'commands = pytest'],
+        ['[testenv]', 'commands = coverage run -p -m pytest'],
+      ),
+    ).toEqual([]);
+  });
+
+  it('accepts assert type(x) == y → is y', () => {
+    expect(
+      change(
+        'tests/test_a.py',
+        ['def test_a():', '    assert type(s) == bytes'],
+        ['def test_a():', '    assert type(s) is bytes'],
+      ),
+    ).toEqual([]);
+  });
+
+  it('accepts JUnit 3 imports', () => {
+    expect(
+      change(
+        'src/test/java/ASuiteTest.java',
+        ['public class ASuiteTest {', '}'],
+        ['import junit.framework.Test;', 'public class ASuiteTest {', '}'],
+      ),
+    ).toEqual([]);
+  });
+});

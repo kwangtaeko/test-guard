@@ -163,6 +163,15 @@ const indent = (s: string) => s.length - s.trimStart().length;
 
 // The YAML block (step or job) that line `index` belongs to.
 export function yamlBlock(lines: string[], index: number): string[] {
+  const [start, end] = yamlBlockRange(lines, index);
+  return lines.slice(start, end);
+}
+
+// [start, end) of the YAML block (step or job) that holds a line.
+export function yamlBlockRange(
+  lines: string[],
+  index: number,
+): [number, number] {
   const line = lines[index] ?? '';
   const own = indent(line.replace(/-\s*/, (m) => ' '.repeat(m.length)));
   let start = index;
@@ -175,7 +184,7 @@ export function yamlBlock(lines: string[], index: number): string[] {
   ) {
     end++;
   }
-  return lines.slice(start, end);
+  return [start, end];
 }
 
 // GitHub Actions: a truthy `continue-on-error` on a step or job whose block
