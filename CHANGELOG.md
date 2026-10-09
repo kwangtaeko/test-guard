@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+- Tests, assertions and swallowed assertions are counted on syntax trees
+  (tree-sitter) instead of regular expressions. Same verdicts on 1,200 real
+  commits; Java helper declarations such as `static void assertEqualsDate(…)`
+  no longer count as assertions (a deleted helper looked like a removed
+  assertion). The package now ships the grammars as WASM files in dist/.
+
 ## 0.3.0 - 2026-10-10
 
 Code that special-cases a test input instead of implementing the behavior.

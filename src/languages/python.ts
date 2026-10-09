@@ -1,6 +1,14 @@
+import type { Node } from 'web-tree-sitter';
+import {
+  type Counts,
+  callee,
+  countAssertions,
+  descendants,
+  insideSwallowingTry,
+  reportsFailure,
+} from './ast.js';
 import type { LanguageSpec } from './index.js';
 import { stripPython } from './strip.js';
-import { blankSwallowedPython, reportsFailure } from './swallowed.js';
 
 // unittest assertion methods; a test file that defines or assigns one has
 // replaced the real check.
@@ -65,58 +73,96 @@ function importedSkips(code: string): string[] {
 // pytest collects `test*` functions at module level and `test*` methods of
 // `Test*` classes; unittest collects methods of TestCase subclasses. A
 // function defined again under the same name replaces the earlier one.
-function countTests(code: string): number {
+function countTests(root: Node): number {
   const tests = new Set<string>();
-  const scopes: { indent: number; kind: 'class' | 'def'; name: string }[] = [];
-  const collected: boolean[] = []; // per scope: tests inside it run
-  for (const line of code.split('\n')) {
-    const text = line.trimStart();
-    // Blank, or the end of a string or bracket that opened further up.
-    if (/^(?:$|["')\]}])/.test(text)) continue;
-    const indent = line.length - text.length;
-    while ((scopes.at(-1)?.indent ?? -1) >= indent) {
-      scopes.pop();
-      collected.pop();
-    }
-    const runs = collected.every(Boolean);
-    const def = /^(?:async\s+)?def\s+(\w+)/.exec(text);
-    const cls = /^class\s+(\w+)\s*(\([^)]*)?/.exec(text);
-    if (def) {
-      const name = def[1] ?? '';
-      if (name.startsWith('test') && runs) {
-        tests.add([...scopes.map((s) => s.name), name].join('.'));
+  const visit = (node: Node, path: string[], collected: boolean) => {
+    for (const child of node.namedChildren) {
+      if (!child) continue;
+      const def =
+        child.type === 'decorated_definition'
+          ? child.childForFieldName('definition')
+          : child;
+      const name = def?.childForFieldName('name')?.text ?? '';
+      if (def?.type === 'function_definition') {
+        if (collected && name.startsWith('test')) {
+          tests.add([...path, name].join('.'));
+        }
+        continue; // nested functions are never collected
       }
-      scopes.push({ indent, kind: 'def', name });
-      collected.push(false); // nested functions are never collected
-    } else if (cls) {
-      const name = cls[1] ?? '';
-      scopes.push({ indent, kind: 'class', name });
-      // Any base named like a test class may be a TestCase subclass.
-      collected.push(name.startsWith('Test') || /Test/.test(cls[2] ?? ''));
+      const body = def?.childForFieldName('body');
+      if (def?.type === 'class_definition' && body) {
+        // Any base named like a test class may be a TestCase subclass.
+        const bases = def.childForFieldName('superclasses')?.text ?? '';
+        visit(
+          body,
+          [...path, name],
+          collected && (name.startsWith('Test') || /Test/.test(bases)),
+        );
+        continue;
+      }
+      visit(child, path, collected);
     }
-  }
+  };
+  visit(root, [], true);
   return tests.size;
+}
+
+// Exception types that catch an assertion's failure.
+const CATCHES_ASSERTIONS = /\b(?:BaseException|Exception|AssertionError)\b/;
+const HANDLER_FAILS =
+  /(?<![\w.])(?:raise|assert)\b|\bfail\s*\(|\.fail\w*\s*\(|\.assert\w*\s*\(/;
+const ALWAYS_PASSES =
+  /(?<![\w.])assert\s+(?:True|\w+)\s*$|\bself\.assert(?:True\s*\(\s*True|IsNotNone\s*\(\s*\w+)\s*\)/gm;
+
+// A bare `except`, `Exception`, `BaseException` or `AssertionError` that
+// doesn't raise or fail, or `with suppress(…)` of one of them.
+function swallows(node: Node): boolean {
+  if (node.type === 'with_statement') {
+    return descendants(node, ['with_item']).some((item) => {
+      const call = item.childForFieldName('value');
+      const args = call?.childForFieldName('arguments')?.text ?? '';
+      return (
+        call?.type === 'call' &&
+        /^(?:contextlib\.)?suppress$/.test(
+          callee(call.childForFieldName('function')),
+        ) &&
+        CATCHES_ASSERTIONS.test(args)
+      );
+    });
+  }
+  return node.namedChildren.some((clause) => {
+    if (clause?.type !== 'except_clause') return false;
+    const [, types = '', body = ''] =
+      /^except\*?([^:]*):([\s\S]*)$/.exec(clause.text) ?? [];
+    return (
+      (types.trim() === '' || CATCHES_ASSERTIONS.test(types)) &&
+      !reportsFailure(body, HANDLER_FAILS, ALWAYS_PASSES)
+    );
+  });
+}
+
+const ASSERT_CALL = /^(?:self\.assert\w*|pytest\.raises)$/;
+
+function count(root: Node): Counts {
+  const assertions = [
+    ...descendants(root, ['assert_statement']),
+    ...descendants(root, ['call']).filter((c) =>
+      ASSERT_CALL.test(callee(c.childForFieldName('function'))),
+    ),
+  ];
+  return {
+    tests: countTests(root),
+    ...countAssertions(assertions, (node) =>
+      insideSwallowingTry(node, ['try_statement', 'with_statement'], swallows),
+    ),
+  };
 }
 
 export const python: LanguageSpec = {
   strip: stripPython,
-  tests: countTests,
   assertions:
     /(?<![\w.])assert(?=[\s(])|(?<![\w.])self\.assert\w*\s*\(|(?<![\w.])pytest\.raises\s*\(/g,
-  // A bare `except`, `Exception`, `BaseException` or `AssertionError` that
-  // doesn't raise or fail catches the assertion's failure.
-  unchecked: (code) =>
-    blankSwallowedPython(
-      code,
-      (clause, body) =>
-        (clause === '' ||
-          /\b(?:BaseException|Exception|AssertionError)\b/.test(clause)) &&
-        !reportsFailure(
-          body,
-          /(?<![\w.])(?:raise|assert)\b|\bfail\s*\(|\.fail\w*\s*\(|\.assert\w*\s*\(/,
-          /(?<![\w.])assert\s+(?:True|\w+)\s*$|\bself\.assert(?:True\s*\(\s*True|IsNotNone\s*\(\s*\w+)\s*\)/gm,
-        ),
-    ),
+  count,
   skips: (code) =>
     new RegExp([...SKIPS, ...importedSkips(code)].join('|'), 'gm'),
 };
