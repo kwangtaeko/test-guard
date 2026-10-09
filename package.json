@@ -43,7 +43,7 @@
   "packageManager": "pnpm@10.33.2",
   "scripts": {
     "build": "tsup",
-    "prepublishOnly": "npm run build",
+    "prepublishOnly": "node scripts/check-release.mjs && npm run build",
     "typecheck": "tsc --noEmit",
     "lint": "biome check .",
     "test": "vitest run"
