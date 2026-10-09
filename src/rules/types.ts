@@ -1,4 +1,5 @@
 import type { Hunk } from '../engine/diff.js';
+import type { LiteralUse } from '../engine/literals.js';
 import type { Analysis } from '../languages/index.js';
 import type { Finding } from '../types.js';
 import type { RunnerConfig } from '../watched.js';
@@ -15,6 +16,8 @@ export interface RuleInput {
   addedToExistingDir: boolean; // a new runner config next to existing files
   guardFile: 'config' | 'hook' | null; // TG006 target
   implementationChanged: boolean | undefined; // TG008; unset per edit
+  implementationFile: boolean; // TG009 target
+  findLiteral: ((literals: string[]) => Map<string, LiteralUse>) | undefined; // TG009
 }
 
 export type RuleFinding = Omit<Finding, 'severity'>;

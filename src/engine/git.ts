@@ -201,6 +201,89 @@ export function listWorktreeFiles(root: string): string[] {
     .filter(Boolean);
 }
 
+export interface GrepHit {
+  path: string;
+  line: number;
+  text: string;
+}
+
+const CODE_GLOBS = [
+  'js',
+  'jsx',
+  'mjs',
+  'cjs',
+  'ts',
+  'tsx',
+  'mts',
+  'cts',
+  'vue',
+  'svelte',
+  'py',
+  'java',
+  'kt',
+  'kts',
+  'scala',
+  'groovy',
+  'go',
+  'rs',
+  'cs',
+  'rb',
+  'php',
+  'swift',
+  'c',
+  'cc',
+  'cpp',
+  'h',
+  'hpp',
+].map((ext) => `*.${ext}`);
+
+// Lines of source files in `rev` that contain any of `patterns` as fixed
+// strings (TG009).
+export function grepTree(
+  root: string,
+  rev: string,
+  patterns: string[],
+  word = false,
+): GrepHit[] {
+  let out: string;
+  try {
+    out = execFileSync(
+      'git',
+      [
+        'grep',
+        '-n',
+        '-z',
+        '-I',
+        '-F',
+        ...(word ? ['-w'] : []),
+        ...patterns.flatMap((p) => ['-e', p]),
+        rev,
+        '--',
+        // Source files only: tests and code, not data or docs.
+        ...CODE_GLOBS,
+      ],
+      {
+        cwd: root,
+        encoding: 'utf8',
+        maxBuffer: 256 * 1024 * 1024,
+        stdio: ['ignore', 'pipe', 'pipe'],
+      },
+    );
+  } catch (error) {
+    // Exit status 1: no match.
+    if ((error as { status?: number }).status === 1) return [];
+    throw new GitError('git grep failed');
+  }
+  return out
+    .split('\n')
+    .filter(Boolean)
+    .flatMap((entry) => {
+      const [spec = '', line = '', text = ''] = entry.split('\0');
+      const path = spec.slice(rev.length + 1);
+      return path ? [{ path, line: Number(line), text }] : [];
+    });
+}
+
 // Files committed in `rev`.
 export function listTreeFiles(root: string, rev: string): string[] {
   return git(root, ['ls-tree', '-r', '-z', '--name-only', rev])

@@ -22,7 +22,12 @@ import {
   isWatched,
 } from '../engine/compare.js';
 import { diffLines } from '../engine/diff.js';
-import { listWorktreeFiles, readBlobIfExists } from '../engine/git.js';
+import {
+  listWorktreeFiles,
+  readBlobIfExists,
+  resolveCommit,
+} from '../engine/git.js';
+import { literalFinder } from '../engine/literals.js';
 import {
   blockStop,
   denyToolUse,
@@ -425,6 +430,9 @@ function loadContext(root: string): { config: Config; ctx: CompareContext } {
         },
       },
     };
+    // Test inputs special-cased in an edit (TG009), looked up in HEAD.
+    const head = resolveCommit(root, 'HEAD');
+    if (head) loaded.ctx.findLiteral = literalFinder(root, head, loaded.ctx);
     contexts.set(root, loaded);
   }
   return loaded;
