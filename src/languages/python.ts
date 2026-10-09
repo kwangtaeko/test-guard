@@ -17,6 +17,9 @@ const ASSERT_METHODS =
 
 const SKIPS = [
   /(?<![\w.])pytest\.(?:skip|xfail)\s*\(/,
+  // Kept under another name (`sk = pytest.skip`), or raised directly.
+  /^[ \t]*\w+[ \t]*=[ \t]*(?:pytest\.)?(?:skip|xfail)[ \t]*$/,
+  /(?<![\w.])pytest\.skip\.Exception\b/,
   /(?<![\w.])(?:\w+\.)*mark\.(?:skip|skipif|xfail)\b/,
   /(?<![\w.])unittest\.skip\w*/,
   // Decorators under any import alias: `@skip`, `@mark.skipif`, `@ut.skipIf`.
@@ -49,6 +52,15 @@ function importedSkips(code: string): string[] {
   for (const m of code.matchAll(
     /^[ \t]*from[ \t]+(pytest|unittest(?:\.case)?)[ \t]+import[ \t]+(\([^)]*\)|[^\n]*)/gm,
   )) {
+    // `from pytest import *` brings `skip`, `xfail` and `importorskip` in.
+    if ((m[2] ?? '').trim() === '*') {
+      patterns.push(
+        m[1] === 'pytest'
+          ? '(?<![\\w.])(?<!def\\s+)(?:skip|xfail|importorskip)\\b(?=\\s*\\()'
+          : '(?<![\\w.])(?<!def\\s+)(?:skip|skipIf|skipUnless)\\b(?=\\s*\\()',
+      );
+      continue;
+    }
     for (const item of (m[2] ?? '').replace(/[()]/g, '').split(',')) {
       const [name, alias = name] = item.trim().split(/\s+as\s+/);
       if (!name || !alias || !/^\w+$/.test(alias)) continue;

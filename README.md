@@ -322,9 +322,9 @@ node scripts/fp-history.mjs /tmp/flask --commits 300
   `git commit --amend` aren't caught before the commit; Stop and CI still
   see the result.
 - **Guesses by name**: a Python class whose base has `Test` in its name is
-  taken as a TestCase subclass; custom `norecursedirs` aren't read. JS test
-  functions imported from somewhere else (`import { it } from './fake'`) and
-  unicode escapes in JS identifiers aren't detected.
+  taken as a TestCase subclass; custom `norecursedirs` aren't read. A JS test
+  function imported from a local file (`import { it } from './fake'`) isn't
+  followed, since projects wrap the runner that way too (Playwright fixtures).
 - **Tests that still look intact but no longer check anything** keep their
   counts, so they aren't detected yet: an early `return`, a test inside
   `if (false)`, an empty `it.each([])`, or mocking the module under test.
