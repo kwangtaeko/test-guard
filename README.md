@@ -132,6 +132,7 @@ git commit -m "test: skip flaky subtraction" -m "Test-Guard-Approved: tracked in
 | TG006 | Getting around test-guard: changing `.test-guard.json`; removing or changing the line that runs it in hook/CI files (`\|\| true`, a narrower hook matcher, `continue-on-error`); from an agent: `git commit --no-verify`, `core.hooksPath`, git aliases/includes/`GIT_CONFIG_GLOBAL`, `Test-Guard-Approved` trailers, `TEST_GUARD_*` variables, disabling or uninstalling the plugin, and writing `.git/`, `.claude/settings.local.json` or `node_modules/test-guard` |
 | TG007 | Weaker assertions: `toBe(3)` → `toBeDefined()` / `not.toBe(…)` / `toBeGreaterThan(…)`, `assertEqual` → `assertTrue` / `assertNotEqual`, `assert x == y` → `assert x != y`, `toThrow(X)` → `toThrow()`, `pytest.raises(ValueError)` → `pytest.raises(Exception)`, and meaningless ones like `expect(true).toBe(true)` |
 | TG008 | Expected values rewritten to match the code: an assertion whose values changed (`toBe(10)` → `toBe(11)`), a changed `.snap` file or inline snapshot, while no implementation file changed. Judged at commit, in CI and when the agent stops (not per edit, so fixing a test before the code is fine); agents are also stopped from running tests with `-u` |
+| TG009 | A test input special-cased in the code: a new comparison such as `if (s === 'IV') return 4` where an existing test passes `'IV'` to the code under test and expects `4`, and the code never used that value before. Judged per edit, at commit, in CI and at Stop |
 
 Languages: TypeScript/JavaScript (Jest, Vitest, Mocha), Python (pytest,
 unittest) and Java (JUnit 4/5).
@@ -330,6 +331,11 @@ node scripts/fp-history.mjs /tmp/flask --commits 300
   changed on their own, but not when real code or a dependency changed in the
   same commit (a new source file with code counts), nor an expected value
   moved into a variable.
+- **Code bent to a wrong test**: TG009 catches a test input compared in the
+  code, but not logic changed to fit a wrong expectation (dropping a branch,
+  skipping a recursion). In the [benchmark](bench/README.md) that was 15 of
+  the 21 runs where Codex changed the code to pass an impossible test; telling
+  it apart from a fix needs the spec.
 - **Assertions swallowed indirectly** aren't seen yet: a promise
   `.catch(() => {})`, or an assertion in a helper function called inside the
   `try`. Moving a test step from one workflow file to another is reported as

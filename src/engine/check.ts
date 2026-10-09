@@ -26,6 +26,7 @@ import {
   readBlobIfExists,
   resolveBase,
 } from './git.js';
+import { literalFinder } from './literals.js';
 
 export interface CheckOptions {
   cwd: string;
@@ -70,6 +71,7 @@ export function runCheck(options: CheckOptions): CheckResult {
 
     const findings: Finding[] = [];
     const changes = [...listChanges(root, base, mode, env)];
+    if (base) ctx.findLiteral = literalFinder(root, base, ctx);
     // A real implementation change: code or dependencies, not just comments
     // or blank lines (TG008).
     ctx.implementationChanged = changes.some(({ beforePath, afterPath }) => {

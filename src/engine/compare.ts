@@ -4,6 +4,7 @@ import { RULES, type RuleId } from '../rules/index.js';
 import type { RuleFinding, RuleInput } from '../rules/types.js';
 import { guardFileKind, isSnapshot, runnerConfigKind } from '../watched.js';
 import { diffLines } from './diff.js';
+import type { LiteralUse } from './literals.js';
 
 export interface FileVersion {
   path: string;
@@ -28,6 +29,9 @@ export interface CompareContext {
   // when one file is judged on its own (an agent's edit), where it can't be
   // known.
   implementationChanged?: boolean;
+  // Where a literal appeared before the change (TG009). Unset when there is
+  // no "before" to search.
+  findLiteral?(literals: string[]): Map<string, LiteralUse>;
 }
 
 // Whether the engine needs the contents of this path.
@@ -36,7 +40,8 @@ export function isWatched(path: string, ctx: CompareContext): boolean {
     ctx.detect(path) !== null ||
     isSnapshot(path) ||
     guardFileKind(path) !== null ||
-    (runnerConfigKind(path) !== null && !ctx.excluded(path))
+    (runnerConfigKind(path) !== null && !ctx.excluded(path)) ||
+    (ctx.findLiteral !== undefined && isImplementationCode(path, ctx))
   );
 }
 
@@ -93,6 +98,8 @@ function toRuleInput(
       change.after !== null &&
       ctx.dirExisted?.(parentDir(change.after.path)) === true,
     implementationChanged: ctx.implementationChanged,
+    implementationFile: isImplementationCode(path, ctx),
+    findLiteral: ctx.findLiteral,
     guardFile:
       guardFileKind(change.after?.path ?? '') ??
       guardFileKind(change.before?.path ?? ''),
@@ -120,6 +127,10 @@ export function isImplementation(path: string, ctx: CompareContext): boolean {
 }
 
 export const isDependencyFile = (path: string) => DEPENDENCIES.test(path);
+
+// Implementation code, not a manifest or lockfile.
+export const isImplementationCode = (path: string, ctx: CompareContext) =>
+  isImplementation(path, ctx) && !isDependencyFile(path);
 
 // Whether a code change does anything: lines other than blank ones and
 // comments changed.

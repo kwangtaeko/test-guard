@@ -14,4 +14,5 @@
 - 스냅샷 갱신(`-u`, `.snap`, 인라인 스냅샷)은 ROADMAP §12 M10(TG008)으로 옮김
 - M7 레드팀에서 남긴 것(M11 엔진과 함께): Promise `.then(…).catch(() => {})`로 삼킨 assertion, `try` 안에서 호출한 헬퍼·람다 속 assertion, `catch (e) { if (e.name !== 'AssertionError') throw e }`, 워크플로 간 테스트 스텝 이동을 파일 경계 너머로 짝짓기, `continue-on-error: ${{ matrix.experimental }}` 허용 여부, `npm test --if-present`, 재시도 액션의 `continue_on_error`
 - M10 레드팀에서 남긴 것: 기대값을 변수로 옮기기(`const expected = 11`), 코드가 든 새 소스 파일로 "구현 변경"을 만들기(테스트가 그 파일을 import하는지까지 보면 줄일 수 있음), `nx`/`turbo`/`lerna`를 거친 `-u`, 한 줄짜리 `package.json`에서 `name`만 바꿔도 TG005 "changed test script"
+- M12(TG009) 레드팀에서 남긴 것: 파라미터 표(`it.each`, `parametrize`)나 여러 줄로 나뉜 인자로 넘긴 테스트 입력, 변수를 거친 입력, lookup 객체(`{ IV: 6 }[s]`)·`startsWith`·정규식으로 비교, 기대값을 계산으로 만드는 특수 처리(`? total + 30`), 테스트 대상 함수가 아닌 곳에 넘긴 값까지 입력으로 보는 문제(바뀐 파일이 정의한 함수인지 확인하면 줄일 수 있음)
 - 0.2 검토에서 보류: "새 기대값 == 실제 테스트 출력" 판정(테스트 실행 필요), 새 코드의 suppressions(eslint-disable, @ts-ignore, noqa 등) 추가, CI의 일반 테스트 잡 삭제·커버리지 임계값 하향, aislop 등 슬롭 도구 결과 병합

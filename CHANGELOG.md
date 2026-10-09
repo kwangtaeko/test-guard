@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+
+- TG009 (new): a test input special-cased in the code. A new comparison in
+  implementation code (`===`, `==`, `case`, `.equals`, `includes`, `in (…)`)
+  with a value an existing test passes to the code under test, where the code
+  right there produces that test's expected value, and the code never used the
+  input before. Blocked per edit, and judged at commit, in CI and at Stop. In
+  the benchmark it catches 5 of the 6 runs where Codex hardcoded a test input
+  and none of the 15 where it changed logic instead.
+
 ## 0.2.0 - 2026-10-07
 
 Expected-value overwrites (TG008), swallowed assertions and CI test steps,
