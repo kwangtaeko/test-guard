@@ -1,6 +1,14 @@
+import type { Node } from 'web-tree-sitter';
+import {
+  type Counts,
+  callee,
+  countAssertions,
+  descendants,
+  insideSwallowingTry,
+  reportsFailure,
+} from './ast.js';
 import type { LanguageSpec } from './index.js';
 import { stripJava } from './strip.js';
-import { blankSwallowedBraces, reportsFailure } from './swallowed.js';
 
 // JUnit assertion methods; a test file that declares one has replaced the
 // real check.
@@ -12,69 +20,85 @@ const TRUSTED_PACKAGES = 'org\\.junit\\.|org\\.testng\\.|junit\\.';
 const ASSERTION_LIBRARIES =
   'org\\.hamcrest\\.|org\\.assertj\\.|com\\.google\\.common\\.truth\\.|org\\.springframework\\.';
 
+const TYPES = [
+  'class_declaration',
+  'interface_declaration',
+  'enum_declaration',
+  'record_declaration',
+  'annotation_type_declaration',
+];
 // Annotations may be fully qualified (`@org.junit.Test`).
-const TEST = new RegExp(`@(?:[\\w$]+\\.)*(?:${TEST_ANNOTATIONS})\\b`);
+const TEST_NAME = new RegExp(`^(?:[\\w$]+\\.)*(?:${TEST_ANNOTATIONS})$`);
 
 // Tests in an inner class run only when it is `@Nested` (JUnit 5) or static
 // (JUnit 4 `Enclosed`); an inner class that lost `@Nested` runs nothing.
-function countTests(code: string): number {
-  const token = new RegExp(
-    `${TEST.source}|(?<![\\w$.])(class|interface|enum|record)\\s+[\\w$]+|[{};]`,
-    'g',
-  );
-  const classes: { depth: number; runs: boolean }[] = [];
-  let depth = 0;
-  let declStart = 0; // where the current declaration's modifiers start
-  let pending: boolean | null = null; // a class header waiting for its `{`
-  let tests = 0;
-  for (const match of code.matchAll(token)) {
-    const text = match[0];
-    if (text === '{') {
-      depth++;
-      if (pending !== null) classes.push({ depth, runs: pending });
-      pending = null;
-      declStart = match.index + 1;
-    } else if (text === '}') {
-      if (classes.at(-1)?.depth === depth) classes.pop();
-      depth--;
-      declStart = match.index + 1;
-    } else if (text === ';') {
-      declStart = match.index + 1;
-    } else if (match[1]) {
-      const runs = classes.every((c) => c.runs);
-      const modifiers = code.slice(declStart, match.index);
-      pending =
-        runs &&
-        (classes.length === 0 ||
-          match[1] !== 'class' ||
-          /@(?:[\w$]+\.)*Nested\b|\bstatic\b/.test(modifiers));
-    } else if (classes.every((c) => c.runs)) {
-      tests++;
-    }
+function runs(node: Node): boolean {
+  const types: Node[] = [];
+  for (let n = node.parent; n; n = n.parent) {
+    if (TYPES.includes(n.type)) types.push(n);
   }
-  return tests;
+  // Every enclosing class but the outermost needs `@Nested` or `static`.
+  return types.slice(0, -1).every((type) => {
+    if (type.type !== 'class_declaration') return true;
+    const modifiers =
+      type.namedChildren.find((c) => c?.type === 'modifiers')?.text ?? '';
+    return /@(?:[\w$]+\.)*Nested\b|\bstatic\b/.test(modifiers);
+  });
+}
+
+// `catch (Exception e)` lets an AssertionError through;
+// `Throwable`/`Error`/`AssertionError` without a rethrow doesn't.
+const CATCHES_ASSERTIONS =
+  /\b(?:Throwable|Error|AssertionError|AssertionFailedError|ComparisonFailure)\b/;
+const HANDLER_FAILS = /(?<![\w$])(?:throw\b|fail\s*\(|assert\w*\s*\()/;
+const ALWAYS_PASSES =
+  /(?<![\w$])assert(?:True\s*\(\s*true|NotNull\s*\(\s*[\w$]+)\s*\)/g;
+
+const swallows = (tryNode: Node) =>
+  tryNode.namedChildren.some(
+    (clause) =>
+      clause?.type === 'catch_clause' &&
+      CATCHES_ASSERTIONS.test(
+        clause.namedChildren.find((c) => c?.type === 'catch_formal_parameter')
+          ?.text ?? '',
+      ) &&
+      !reportsFailure(
+        clause.childForFieldName('body')?.text ?? '',
+        HANDLER_FAILS,
+        ALWAYS_PASSES,
+      ),
+  );
+
+function count(root: Node): Counts {
+  const tests = descendants(root, ['marker_annotation', 'annotation']).filter(
+    (a) => TEST_NAME.test(callee(a.childForFieldName('name'))) && runs(a),
+  ).length;
+  const assertions = [
+    ...descendants(root, ['method_invocation']).filter((m) =>
+      /^(?:assert\w*|fail)$/.test(m.childForFieldName('name')?.text ?? ''),
+    ),
+    // `assert (x)` reads like a call.
+    ...descendants(root, ['assert_statement']).filter((s) =>
+      /^assert\s*\(/.test(s.text),
+    ),
+  ];
+  return {
+    tests,
+    ...countAssertions(assertions, (node) =>
+      insideSwallowingTry(
+        node,
+        ['try_statement', 'try_with_resources_statement'],
+        swallows,
+      ),
+    ),
+  };
 }
 
 export const java: LanguageSpec = {
   strip: stripJava,
-  tests: countTests,
   // A leading `.` is allowed: `Assertions.assertEquals(`.
   assertions: /(?<![\w$])(?:assert\w*|fail)\s*\(/g,
-  // Assertion failures are `AssertionError`s: `catch (Exception e)` lets them
-  // through, `Throwable`/`Error`/`AssertionError` without a rethrow doesn't.
-  unchecked: (code) =>
-    blankSwallowedBraces(
-      code,
-      (clause, body) =>
-        /\b(?:Throwable|Error|AssertionError|AssertionFailedError|ComparisonFailure)\b/.test(
-          clause,
-        ) &&
-        !reportsFailure(
-          body,
-          /(?<![\w$])(?:throw\b|fail\s*\(|assert\w*\s*\()/,
-          /(?<![\w$])assert(?:True\s*\(\s*true|NotNull\s*\(\s*[\w$]+)\s*\)/g,
-        ),
-    ),
+  count,
   skips: new RegExp(
     [
       '@(?:[\\w$]+\\.)*(?:Disabled\\w*|Enabled\\w*|Ignore)\\b',

@@ -1,9 +1,28 @@
+import {
+  callee,
+  countAssertions,
+  descendants,
+  insideSwallowingTry,
+  reportsFailure,
+} from './ast.js';
 import type { LanguageSpec } from './index.js';
 import { stripCLike } from './strip.js';
-import { blankSwallowedBraces, reportsFailure } from './swallowed.js';
 
 const MODIFIERS =
   'skip|only|each|concurrent|skipIf|runIf|fails|failing|sequential';
+
+// Calls that declare a test (`it.each(…)` once, not again for the call it
+// returns) and calls that assert.
+const TEST_CALL = new RegExp(
+  `^(?:(?:it|test)(?:\\.(?:${MODIFIERS}))*|xit|xtest|fit)$`,
+);
+const ASSERT_CALL = /^(?:expect(?:\.soft)?|assert(?:\.\w+)?)$/;
+
+// A `catch` body that fails the test, and checks in it that always pass.
+const HANDLER_FAILS =
+  /(?<![\w$])(?:throw|expect|assert|fail|reject)(?![\w$])|\.(?:fail|reject)\s*\(|(?<![\w$.])done\s*\(\s*[^\s)]|(?<![\w$.])t\.(?!log|pass|plan|teardown|timeout)\w+\s*\(|\.should\b/;
+const ALWAYS_PASSES =
+  /(?<![\w$.])expect\s*\(\s*[\w$]+\s*\)\s*\.\s*(?:toBeDefined|toBeTruthy|not\s*\.\s*toBe(?:Null|Undefined))\s*\(\s*\)|(?<![\w$.])expect\s*\(\s*(true|false|null|\d+)\s*\)\s*\.\s*(?:toBe|toEqual)\s*\(\s*\1\s*\)|(?<![\w$.])assert(?:\.ok)?\s*\(\s*[\w$]+\s*\)/g;
 
 // Jest/Vitest matchers that `expect.extend` must not replace.
 const BUILTIN_MATCHERS =
@@ -57,22 +76,29 @@ export const js: LanguageSpec = {
   strip: (source) =>
     stripCLike(source, { templateLiterals: true, textBlocks: false }),
   // `(?<![\w$.])` keeps `regex.test(`, `profit(` and `obj.expect(` out.
-  tests: new RegExp(
-    `(?<![\\w$.])(?:(?:it|test)(?:\\.(?:${MODIFIERS}))*|xit|xtest|fit)\\s*\\(`,
-    'g',
-  ),
   assertions: /(?<![\w$.])(?:expect(?:\.soft)?|assert(?:\.\w+)?)\s*\(/g,
-  // `catch` takes every error; it swallows unless it fails the test itself.
-  unchecked: (code) =>
-    blankSwallowedBraces(
-      code,
-      (_, body) =>
-        !reportsFailure(
-          body,
-          /(?<![\w$])(?:throw|expect|assert|fail|reject)(?![\w$])|\.(?:fail|reject)\s*\(|(?<![\w$.])done\s*\(\s*[^\s)]|(?<![\w$.])t\.(?!log|pass|plan|teardown|timeout)\w+\s*\(|\.should\b/,
-          /(?<![\w$.])expect\s*\(\s*[\w$]+\s*\)\s*\.\s*(?:toBeDefined|toBeTruthy|not\s*\.\s*toBe(?:Null|Undefined))\s*\(\s*\)|(?<![\w$.])expect\s*\(\s*(true|false|null|\d+)\s*\)\s*\.\s*(?:toBe|toEqual)\s*\(\s*\1\s*\)|(?<![\w$.])assert(?:\.ok)?\s*\(\s*[\w$]+\s*\)/g,
-        ),
-    ),
+  count: (root) => {
+    const calls = descendants(root, ['call_expression']);
+    const named = (re: RegExp) =>
+      calls.filter((c) => re.test(callee(c.childForFieldName('function'))));
+    return {
+      tests: named(TEST_CALL).length,
+      // `catch` takes every error; it swallows unless it fails the test.
+      ...countAssertions(named(ASSERT_CALL), (node) =>
+        insideSwallowingTry(node, ['try_statement'], (tryNode) => {
+          const handler = tryNode.childForFieldName('handler');
+          return (
+            handler !== null &&
+            !reportsFailure(
+              handler.childForFieldName('body')?.text ?? '',
+              HANDLER_FAILS,
+              ALWAYS_PASSES,
+            )
+          );
+        }),
+      ),
+    };
+  },
   skips: (code) => {
     const patterns = [...SKIPS, ...redefinitions(runnerNames(code))];
     // The test callback's context under any name: `(c) => { c.skip() }`.

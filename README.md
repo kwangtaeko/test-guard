@@ -40,8 +40,8 @@ pnpm add --save-dev test-guard
 yarn add --dev test-guard
 ```
 
-Requires Node.js 20 or later and git. The package is a single file with no
-runtime dependencies.
+Requires Node.js 20 or later and git. The package has no runtime
+dependencies: one bundle plus the grammars as WASM files.
 
 ## Set it up
 
@@ -307,8 +307,9 @@ node scripts/fp-history.mjs /tmp/flask --commits 300
   agent with shell access that deliberately works around them can't be fully
   stopped locally. That is why CI, where only humans can approve, has the
   final say.
-- **Regex, not AST.** Comments and string contents are ignored, but unusual
-  syntax can be miscounted. Moving tests between files counts as a decrease in
+- **Partly regex.** Tests and assertions are counted on syntax trees; skips,
+  matcher swaps and config checks still match patterns, so unusual syntax can
+  slip past them. Moving tests between files counts as a decrease in
   one file.
 - **In-shell edits** (`sed -i`, `node -e`, scripts) aren't visible before they
   run; they are caught at Stop, at commit and in CI. Shell analysis follows

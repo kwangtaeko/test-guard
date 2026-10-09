@@ -1,18 +1,19 @@
+import type { Node } from 'web-tree-sitter';
 import { normalizePath } from '../paths.js';
 import type { FileStats, Language } from '../types.js';
+import type { Counts } from './ast.js';
 import { java } from './java.js';
 import { js } from './js.js';
 import { python } from './python.js';
 import { count } from './strip.js';
+import { parse } from './syntax.js';
 
 export interface LanguageSpec {
   strip(source: string): string;
-  // A function when counting needs more than a pattern (scopes, duplicates).
-  tests: RegExp | ((code: string) => number);
+  // Tests, assertions and swallowed assertions, on the stripped code's tree.
+  count(root: Node): Counts;
+  // An assertion on one stripped line (TG007, TG008).
   assertions: RegExp;
-  // Blanks code whose assertions can't fail the test (a `try` whose handler
-  // swallows the failure).
-  unchecked?: (code: string) => string;
   // A function when the pattern depends on the file (imported aliases).
   skips: RegExp | ((code: string) => RegExp);
 }
@@ -49,21 +50,24 @@ export function analyzeSource(
   const code = spec.strip(toLf(source));
   const skips =
     typeof spec.skips === 'function' ? spec.skips(code) : spec.skips;
-  const assertions = count(spec.unchecked?.(code) ?? code, spec.assertions);
+  const tree = parse(language, code);
+  let counts: Counts;
+  try {
+    counts = spec.count(tree.rootNode);
+  } finally {
+    tree.delete(); // WASM memory isn't garbage-collected
+  }
   return {
     stats: {
       path: normalizePath(path),
       language,
-      tests:
-        typeof spec.tests === 'function'
-          ? spec.tests(code)
-          : count(code, spec.tests),
-      assertions,
+      tests: counts.tests,
+      assertions: counts.assertions,
       skips: count(code, skips),
     },
     lines: code.split('\n'),
     skips: findMatches(code, skips),
-    swallowed: count(code, spec.assertions) - assertions,
+    swallowed: counts.swallowed,
   };
 }
 
