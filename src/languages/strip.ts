@@ -185,7 +185,3 @@ export function stripPython(src: string): string {
   }
   return out.result();
 }
-
-export function count(code: string, pattern: RegExp): number {
-  return code.match(pattern)?.length ?? 0;
-}

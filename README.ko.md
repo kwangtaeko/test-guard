@@ -306,8 +306,9 @@ node scripts/fp-history.mjs /tmp/flask --commits 300
   필요합니다. 워크플로 트리거 변경(`on:`, `paths-ignore`)과 `git commit --amend`로 사람의 승인
   트레일러를 재사용하는 것은 커밋 전에 잡지 못하며, Stop과 CI에서 결과를 봅니다.
 - **이름으로 추정하는 부분**: Python 클래스의 부모 이름에 `Test`가 들어 있으면 TestCase 하위
-  클래스로 봅니다. 사용자 지정 `norecursedirs`는 읽지 않습니다. 다른 곳에서 import한 JS 테스트
-  함수(`import { it } from './fake'`)와 JS 식별자 안의 유니코드 이스케이프는 잡지 못합니다.
+  클래스로 봅니다. 사용자 지정 `norecursedirs`는 읽지 않습니다. 로컬 파일에서 가져온 JS 테스트
+  함수(`import { it } from './fake'`)는 따라가 보지 않습니다. 프로젝트가 러너를 감싸는 흔한 방식이기
+  때문입니다(Playwright 픽스처).
 - **겉모양은 그대로인데 실제로는 아무것도 검사하지 않는 테스트**는 개수가 그대로라 아직 잡지
   못합니다: 테스트 앞부분의 `return`, `if (false)` 안의 테스트, 빈 `it.each([])`, 테스트 대상
   모듈을 mock으로 바꾸기. 문법을 이해하는 분석(계획 중)이 필요합니다. 기대값만 바꾼 경우는

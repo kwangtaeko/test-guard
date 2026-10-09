@@ -5,13 +5,15 @@ import type { Counts } from './ast.js';
 import { java } from './java.js';
 import { js } from './js.js';
 import { python } from './python.js';
-import { count } from './strip.js';
 import { parse } from './syntax.js';
 
 export interface LanguageSpec {
   strip(source: string): string;
   // Tests, assertions and swallowed assertions, on the stripped code's tree.
   count(root: Node): Counts;
+  // Skips found on the tree of the original source, where the patterns
+  // fall short (string values, imports, variables).
+  treeSkips?(root: Node): SkipMatch[];
   // An assertion on one stripped line (TG007, TG008).
   assertions: RegExp;
   // A function when the pattern depends on the file (imported aliases).
@@ -57,16 +59,31 @@ export function analyzeSource(
   } finally {
     tree.delete(); // WASM memory isn't garbage-collected
   }
+  const matches = findMatches(code, skips);
+  if (spec.treeSkips) {
+    const raw = parse(language, toLf(source));
+    try {
+      // One report per line: the patterns may have seen it already.
+      const lines = new Set(matches.map((m) => m.line));
+      for (const match of spec.treeSkips(raw.rootNode)) {
+        if (!lines.has(match.line)) matches.push(match);
+        lines.add(match.line);
+      }
+    } finally {
+      raw.delete();
+    }
+    matches.sort((a, b) => a.line - b.line);
+  }
   return {
     stats: {
       path: normalizePath(path),
       language,
       tests: counts.tests,
       assertions: counts.assertions,
-      skips: count(code, skips),
+      skips: matches.length,
     },
     lines: code.split('\n'),
-    skips: findMatches(code, skips),
+    skips: matches,
     swallowed: counts.swallowed,
   };
 }
@@ -88,7 +105,7 @@ function findMatches(code: string, pattern: RegExp): SkipMatch[] {
     matches.push({
       line,
       text: match[0]
-        .replace(/\s*\($/, '')
+        .replace(/\s*(?:\?\.\s*)?\($/, '')
         .replace(/\s+/g, ' ')
         .trim(),
     });

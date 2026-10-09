@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+- TG004, found on the syntax tree: `ctx['skip']()` / `it['skip'](…)`, a
+  destructured `{ skip }` or `{ skip: s }` of the test context called later,
+  `ctx?.skip?.()` and `it?.skip(…)`, unicode escapes in identifiers
+  (`\u0069t.skip`), node:test options in a variable or set later
+  (`opts.skip = true`); Python `skip()` / `xfail()` after
+  `from pytest import *`, `sk = pytest.skip`, `pytest.skip.Exception`.
+- TG002, Java: `@Test` methods that never run don't count: `private` or
+  `static` ones, JUnit 5 ones returning a value, non-public ones under JUnit 4,
+  and tests in an `abstract` class. `@TestFactory` / `@TestTemplate` count.
+- node:test options are read from the tree instead of a pattern that took
+  about a minute on a 400 KB test file (now half a second).
 - Tests, assertions and swallowed assertions are counted on syntax trees
   (tree-sitter) instead of regular expressions. Same verdicts on 1,200 real
   commits; Java helper declarations such as `static void assertEqualsDate(…)`

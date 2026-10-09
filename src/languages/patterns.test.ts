@@ -114,7 +114,7 @@ describe('python collection', () => {
 describe('js skips', () => {
   it.each([
     ["test('a', { skip: true }, () => {});", 'skip: true'],
-    ["it('a', { todo: 'later' }, () => {});", "todo: ' '"],
+    ["it('a', { todo: 'later' }, () => {});", "todo: 'later'"],
     ["t.test('a', { skip: true }, () => {});", 'skip: true'],
     ['test({ only: true }, () => {});', 'only: true'],
     ["it('a', function () { this.skip(); });", 'this.skip'],
