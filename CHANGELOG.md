@@ -1,6 +1,8 @@
 # Changelog
 
-## Unreleased
+## 0.3.0 - 2026-10-10
+
+Code that special-cases a test input instead of implementing the behavior.
 
 - TG009 (new): a test input special-cased in the code. A new comparison in
   implementation code (`===`, `==`, `case`, `.equals`, `includes`, `in (…)`)

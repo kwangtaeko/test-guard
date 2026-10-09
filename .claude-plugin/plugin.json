@@ -1,7 +1,7 @@
 {
   "name": "test-guard",
   "displayName": "test-guard",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Blocks Claude from deleting, skipping or weakening tests to make them pass, before the edit happens.",
   "author": {
     "name": "tonygwangsk",
