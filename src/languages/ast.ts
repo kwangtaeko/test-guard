@@ -24,17 +24,17 @@ export function reportsFailure(
   caught?: { name: string; code: string },
 ): boolean {
   if (/\.(?:push|append|add|addError)\s*\(/.test(body)) return true;
-  const escape = (s: string) => s.replace(/\$/g, '\\$');
+  const quote = (s: string) => s.replace(/\$/g, '\\$');
   const kept =
     caught &&
     new RegExp(
-      `([\\w$]+)\\s*(?<![=!<>])=(?!=)\\s*${escape(caught.name)}(?![\\w$])`,
+      `([\\w$]+)\\s*(?<![=!<>])=(?!=)\\s*${quote(caught.name)}(?![\\w$])`,
     ).exec(body)?.[1];
   if (
     caught &&
     kept &&
     new RegExp(
-      `(?<![\\w$.])(?:(?:throw|raise)\\s+|(?:expect|assert\\w*)\\s*\\(\\s*|assert\\s+(?:not\\s+)?)${escape(kept)}(?![\\w$])`,
+      `(?<![\\w$.])(?:(?:throw|raise)\\s+|(?:expect|assert\\w*)\\s*\\(\\s*|assert\\s+(?:not\\s+)?)${quote(kept)}(?![\\w$])`,
     ).test(caught.code)
   ) {
     return true;
