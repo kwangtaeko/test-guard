@@ -2,9 +2,13 @@ import type { Node } from 'web-tree-sitter';
 import {
   type Counts,
   callee,
+  caughtIn,
   countAssertions,
+  deadCode,
   descendants,
+  type Helper,
   insideSwallowingTry,
+  literalConstants,
   reportsFailure,
 } from './ast.js';
 import type { LanguageSpec } from './index.js';
@@ -30,6 +34,7 @@ const TYPES = [
 ];
 // Annotations may be fully qualified (`@org.junit.Test`).
 const TEST_NAME = new RegExp(`^(?:[\\w$]+\\.)*(?:${TEST_ANNOTATIONS})$`);
+const TESTED = new RegExp(`@(?:[\\w$]+\\.)*(?:${TEST_ANNOTATIONS})\\b`);
 
 const modifiersOf = (node: Node | null) =>
   node?.namedChildren.find((c) => c?.type === 'modifiers')?.text ?? '';
@@ -76,20 +81,71 @@ const HANDLER_FAILS = /(?<![\w$])(?:throw\b|fail\s*\(|assert\w*\s*\()/;
 const ALWAYS_PASSES =
   /(?<![\w$])assert(?:True\s*\(\s*true|NotNull\s*\(\s*[\w$]+)\s*\)/g;
 
-const swallows = (tryNode: Node) =>
-  tryNode.namedChildren.some(
-    (clause) =>
-      clause?.type === 'catch_clause' &&
-      CATCHES_ASSERTIONS.test(
-        clause.namedChildren.find((c) => c?.type === 'catch_formal_parameter')
-          ?.text ?? '',
-      ) &&
-      !reportsFailure(
-        clause.childForFieldName('body')?.text ?? '',
-        HANDLER_FAILS,
-        ALWAYS_PASSES,
-      ),
+// A `catch` clause that catches assertion failures and drops them.
+function ignores(clause: Node): boolean {
+  if (clause.type !== 'catch_clause') return false;
+  const param =
+    clause.namedChildren.find((c) => c?.type === 'catch_formal_parameter')
+      ?.text ?? '';
+  return (
+    CATCHES_ASSERTIONS.test(param) &&
+    !reportsFailure(
+      clause.childForFieldName('body')?.text ?? '',
+      HANDLER_FAILS,
+      ALWAYS_PASSES,
+      caughtIn(clause, /([\w$]+)\s*$/.exec(param)?.[1]),
+    )
   );
+}
+
+const swallows = (tryNode: Node) =>
+  tryNode.namedChildren.some((clause) => clause && ignores(clause));
+
+// `static final boolean SKIP = true`, and every other binding of a name.
+function constants(root: Node): Map<string, string> {
+  const bindings: [string, string][] = [];
+  for (const decl of descendants(root, ['variable_declarator'])) {
+    const name = decl.childForFieldName('name');
+    if (!name) continue;
+    const final = /\bfinal\b/.test(modifiersOf(decl.parent));
+    bindings.push([
+      name.text,
+      final ? (decl.childForFieldName('value')?.text ?? '') : '',
+    ]);
+  }
+  for (const node of descendants(root, [
+    'assignment_expression',
+    'formal_parameter',
+    'catch_formal_parameter',
+  ])) {
+    const name =
+      node.childForFieldName('left') ?? node.childForFieldName('name');
+    if (name?.type === 'identifier') bindings.push([name.text, '']);
+  }
+  return literalConstants(bindings);
+}
+
+// The method a node runs in, unless it is a test or the node is in a
+// lambda. Only a private method without annotations (`@BeforeEach`) is
+// out of reach of other classes and of the runner.
+function helper(node: Node): Helper | null {
+  let fn = node.parent;
+  while (
+    fn &&
+    fn.type !== 'method_declaration' &&
+    fn.type !== 'lambda_expression'
+  ) {
+    fn = fn.parent;
+  }
+  if (fn?.type !== 'method_declaration') return null;
+  const modifiers = modifiersOf(fn);
+  const name = fn.childForFieldName('name');
+  if (!name || TESTED.test(modifiers)) return null;
+  return {
+    name,
+    local: /\bprivate\b/.test(modifiers) && !modifiers.includes('@'),
+  };
+}
 
 function count(root: Node): Counts {
   // JUnit 4's `@Test` (and no JUnit 5): test methods must be public.
@@ -112,13 +168,18 @@ function count(root: Node): Counts {
   ];
   return {
     tests,
-    ...countAssertions(assertions, (node) =>
-      insideSwallowingTry(
-        node,
-        ['try_statement', 'try_with_resources_statement'],
-        swallows,
-      ),
-    ),
+    deadTests: 0, // `@Test` methods can't sit in dead code
+    ...countAssertions(root, assertions, {
+      dead: deadCode(undefined, constants(root)),
+      swallowed: (node) =>
+        insideSwallowingTry(
+          node,
+          ['try_statement', 'try_with_resources_statement'],
+          swallows,
+          ignores,
+        ),
+      helper,
+    }),
   };
 }
 

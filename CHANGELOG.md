@@ -2,6 +2,26 @@
 
 ## Unreleased
 
+- TG002/TG003: tests and assertions that can never fail don't count, so
+  hollowing a test out is reported like deleting it: code after a `return`
+  or `if (true) return`, under `if (false)` / `while (false)` or the
+  `else` of `if (true)`, in a loop over `[]`, in `it.each([])` /
+  `describe.each([])` or `@pytest.mark.parametrize("x", [])`; JS assertions
+  in a `.then(…)` whose chain ends in a `.catch` that ignores the error; and
+  assertions in a helper function that is only called inside a swallowing
+  `try` (or only from code that never runs). Conditions read names bound
+  once to a literal in the file (`const SKIP = true; if (SKIP) return`); a
+  helper nothing calls checks nothing when no other file or the runner can
+  call it (a non-exported JS function, a nested Python function, a private
+  Java method without annotations); checks in a `catch` that ignores the
+  failure always pass, so they count as swallowed too. A `catch` that keeps
+  the error (`last = e`) to throw later still counts as failing. Messages say
+  how many (`assertions 3 → 1 (2 in code that never runs)`).
+- TG004: a new `vi.mock` / `jest.mock` of the module the test file is named
+  after (`vi.mock('./sum')` or `vi.mock(import('./sum'))` in `sum.test.ts`,
+  resolved from the test's folder, so `vi.mock('../services/user')` in
+  `routes/user.test.ts` is fine), which replaces the code under test. Partial mocks (`importOriginal`, `requireActual`, a factory taking
+  the original, `{ spy: true }`) are fine.
 - TG004, found on the syntax tree: `ctx['skip']()` / `it['skip'](…)`, a
   destructured `{ skip }` or `{ skip: s }` of the test context called later,
   `ctx?.skip?.()` and `it?.skip(…)`, unicode escapes in identifiers

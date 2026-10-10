@@ -320,33 +320,39 @@ describe('swallowed assertions, red-team re-check', () => {
     analyze(path, source).swallowed;
 
   it.each([
-    // A handler whose check always passes.
+    // A handler whose check always passes (that check counts too).
     [
       'a.test.js',
       "it('a', () => {\n  try { expect(f()).toBe(1) } catch (e) { expect(e).toBeDefined() }\n});\n",
+      2,
     ],
     [
       'a.test.js',
       "it('a', (done) => {\n  try { expect(f()).toBe(1) } catch (e) { done() }\n});\n",
+      1,
     ],
     [
       'src/test/java/ATest.java',
       'class ATest {\n  @Test void a() {\n    try { assertEquals(1, f()); } catch (Throwable t) { assertTrue(true); }\n  }\n}\n',
+      2,
     ],
     [
       'src/test/java/ATest.java',
       'class ATest {\n  @Test void a() {\n    try { assertEquals(1, f()); } catch (Throwable t) { assertionErrors = t; }\n  }\n}\n',
+      1,
     ],
     [
       'test_a.py',
       'from contextlib import suppress\n\ndef test_a():\n    with suppress(AssertionError):\n        assert f() == 1\n',
+      1,
     ],
     [
       'test_a.py',
       'import contextlib\n\ndef test_a():\n    with contextlib.suppress(Exception): assert f() == 1\n',
+      1,
     ],
-  ])('%s: swallowed (%#)', (path, source) => {
-    expect(swallowed(path, source)).toBe(1);
+  ])('%s: swallowed (%#)', (path, source, count) => {
+    expect(swallowed(path, source)).toBe(count);
   });
 
   it.each([

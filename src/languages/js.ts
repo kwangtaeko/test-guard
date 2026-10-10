@@ -1,9 +1,14 @@
 import type { Node } from 'web-tree-sitter';
 import {
+  type Counts,
   callee,
+  caughtIn,
   countAssertions,
+  deadCode,
   descendants,
+  type Helper,
   insideSwallowingTry,
+  literalConstants,
   reportsFailure,
 } from './ast.js';
 import type { LanguageSpec, SkipMatch } from './index.js';
@@ -48,7 +53,7 @@ const FUNCTIONS = ['arrow_function', 'function_expression', 'function'];
 // Skips written in ways the patterns can't follow, found on the tree of the
 // original source (string values intact). Only what a test's own context
 // can do counts: `ctx['skip']()`, not `cache['skip']()`.
-function treeSkips(root: Node): SkipMatch[] {
+function treeSkips(root: Node, path: string): SkipMatch[] {
   const found: SkipMatch[] = [];
   const at = (node: Node, text: string) =>
     found.push({ line: node.startPosition.row + 1, text });
@@ -187,7 +192,102 @@ function treeSkips(root: Node): SkipMatch[] {
       at(assign, `${prop}: ${right}`);
     }
   }
+  found.push(...subjectMocks(calls, path));
   return found;
+}
+
+// A module path without extension or `/index`, `.` and `..` resolved.
+function modulePath(path: string): string {
+  const out: string[] = [];
+  for (const part of path.replace(/\.[cm]?[jt]sx?$/, '').split('/')) {
+    if (part === '..') out.pop();
+    else if (part !== '.' && part !== '') out.push(part);
+  }
+  if (out.at(-1) === 'index') out.pop();
+  return out.join('/');
+}
+
+// The module a test file is named after: `src/foo` for `src/foo.test.ts`,
+// `src/__tests__/foo.ts`, and `test/foo.test.ts` when tests mirror `src/`.
+function subjectsOf(path: string): string[] {
+  const parts = path.split('/');
+  const base = parts.pop() ?? '';
+  let stem = /^(.+?)[._-](?:test|spec)s?\.[^.]+$/.exec(base)?.[1];
+  if (parts.at(-1) === '__tests__') {
+    parts.pop();
+    stem ??= base.replace(/\..*$/, '');
+  }
+  if (!stem) return [];
+  const subject = modulePath([...parts, stem].join('/'));
+  const mirrored = parts.findIndex((p) =>
+    /^(?:tests?|spec|__tests__)$/.test(p),
+  );
+  if (mirrored === -1) return [subject];
+  const swap = (by: string[]) =>
+    modulePath(
+      [
+        ...parts.slice(0, mirrored),
+        ...by,
+        ...parts.slice(mirrored + 1),
+        stem,
+      ].join('/'),
+    );
+  return [subject, swap([]), swap(['src'])];
+}
+
+const MOCK = /^(?:vi|jest)\.(?:mock|doMock|unstable_mockModule)$/;
+
+// `vi.mock('./foo')` in `foo.test.ts`: the code under test replaced by a
+// mock. A factory that gets the real module (`importOriginal`, or through
+// a parameter) and options such as `{ spy: true }` keep part of it.
+function subjectMocks(calls: Node[], path: string): SkipMatch[] {
+  const subjects = subjectsOf(path);
+  if (subjects.length === 0) return [];
+  const dir = path.split('/').slice(0, -1).join('/');
+  return calls.flatMap((call) => {
+    if (!MOCK.test(callee(call.childForFieldName('function')))) return [];
+    const [arg, factory, ...rest] =
+      call.childForFieldName('arguments')?.namedChildren ?? [];
+    // Vitest also takes `vi.mock(import('./foo'), …)`.
+    const specifier =
+      arg?.type === 'call_expression' &&
+      arg.childForFieldName('function')?.type === 'import'
+        ? arg.childForFieldName('arguments')?.namedChildren[0]
+        : arg;
+    const module = stringValue(specifier);
+    if (!module || rest.length > 0) return [];
+    // A relative path resolves from the test; an alias (`@/foo`) has to end
+    // the subject's path.
+    const relative = /^\.{1,2}(?:\/|$)/.test(module);
+    const alias = /^(?:[@~]\/|#)/.test(module)
+      ? modulePath(module.replace(/^(?:[@~]\/|#)/, ''))
+      : null;
+    const target = relative ? modulePath(`${dir}/${module}`) : null;
+    const mocked = subjects.some((s) =>
+      target !== null
+        ? s === target
+        : alias !== null &&
+          alias !== '' &&
+          (s === alias || s.endsWith(`/${alias}`)),
+    );
+    if (!mocked) return [];
+    if (
+      factory &&
+      (!FUNCTIONS.includes(factory.type) ||
+        // `(orig) => …`, or `orig => …` (no `parameters` field).
+        (factory.childForFieldName('parameters')?.namedChildren.length ?? 1) >
+          0 ||
+        /\b(?:importActual|importOriginal|requireActual)\b/.test(factory.text))
+    ) {
+      return [];
+    }
+    return [
+      {
+        line: call.startPosition.row + 1,
+        text: `${callee(call.childForFieldName('function'))}('${module}')`,
+      },
+    ];
+  });
 }
 
 // Jest/Vitest matchers that `expect.extend` must not replace.
@@ -236,6 +336,177 @@ function contextNames(code: string): string[] {
   return [...names];
 }
 
+// Handlers passed by name that drop the error: `.catch(noop)`.
+const DROPS = /^(?:console\.\w+|(?:_|lodash)\.noop|noop)$/;
+
+// A `catch` clause or `.catch` callback that doesn't fail the test.
+function ignores(handler: Node | null | undefined): boolean {
+  if (!handler) return false;
+  if (handler.type === 'identifier' || handler.type === 'member_expression') {
+    return DROPS.test(callee(handler));
+  }
+  if (handler.type !== 'catch_clause' && !FUNCTIONS.includes(handler.type)) {
+    return false;
+  }
+  const param =
+    handler.childForFieldName('parameter') ??
+    handler.childForFieldName('parameters')?.namedChildren[0];
+  const caught =
+    param?.type === 'required_parameter'
+      ? param.childForFieldName('pattern')
+      : param;
+  return !reportsFailure(
+    handler.childForFieldName('body')?.text ?? '',
+    HANDLER_FAILS,
+    ALWAYS_PASSES,
+    caughtIn(handler, caught?.type === 'identifier' ? caught.text : undefined),
+  );
+}
+
+// A promise chain from `node` on that ends in a `.catch` ignoring the error:
+// `check().catch(() => {})`, `expect(p).resolves.toBe(1).catch(noop)`.
+function caughtLater(node: Node): boolean {
+  for (let c: Node = node; ; ) {
+    const p = c.parent;
+    if (p?.type === 'member_expression' && has(p, 'object', c)) {
+      const call = p.parent;
+      if (call?.type === 'call_expression' && has(call, 'function', p)) {
+        if (
+          p.childForFieldName('property')?.text === 'catch' &&
+          ignores(call.childForFieldName('arguments')?.namedChildren[0])
+        ) {
+          return true;
+        }
+        c = call;
+      } else {
+        c = p;
+      }
+    } else if (p?.type === 'call_expression' && has(p, 'function', c)) {
+      c = p;
+    } else {
+      return false;
+    }
+  }
+}
+
+const has = (node: Node, field: string, child: Node) =>
+  node.childForFieldName(field)?.id === child.id;
+
+// An assertion whose failure a promise chain ignores: in a `.then(…)`
+// callback, or itself, followed by `.catch(() => {})`.
+function insideSwallowingCatch(node: Node): boolean {
+  if (caughtLater(node)) return true;
+  for (let n: Node | null = node; n?.parent; n = n.parent) {
+    const call = n.parent;
+    if (n.type !== 'arguments' || call.type !== 'call_expression') continue;
+    const fn = call.childForFieldName('function');
+    if (
+      fn?.childForFieldName('property')?.text === 'then' &&
+      caughtLater(call)
+    ) {
+      return true;
+    }
+  }
+  return false;
+}
+
+// `it.each([])(…)`, `describe.each([])(…)`: no cases, nothing runs.
+const emptyEach = (fn: Node | null) =>
+  fn?.type === 'call_expression' &&
+  /\.each$/.test(
+    callee(fn.childForFieldName('function')).replace(/\?\./g, '.'),
+  ) &&
+  callee(fn.childForFieldName('arguments')) === '([])';
+
+const DECLARATIONS = [
+  ...FUNCTIONS,
+  'function_declaration',
+  'method_definition',
+];
+
+// The function a node runs in, unless it is a callback, a method, or
+// exported.
+function helper(node: Node): Helper | null {
+  let fn = node.parent;
+  while (fn && !DECLARATIONS.includes(fn.type)) fn = fn.parent;
+  const named = fn?.type === 'function_declaration' ? fn : fn?.parent;
+  const name = named?.childForFieldName('name');
+  if (
+    (named?.type !== 'function_declaration' &&
+      named?.type !== 'variable_declarator') ||
+    name?.type !== 'identifier'
+  ) {
+    return null;
+  }
+  // `export function`, `export const`.
+  const statement =
+    named.type === 'function_declaration' ? named : named.parent;
+  return statement?.parent?.type === 'export_statement'
+    ? null
+    : { name, local: true };
+}
+
+// `const SKIP = true`, and every other binding of a name, which keeps it
+// from being a constant.
+function constants(root: Node): Map<string, string> {
+  const bindings: [string, string][] = [];
+  for (const decl of descendants(root, ['variable_declarator'])) {
+    const name = decl.childForFieldName('name');
+    if (name?.type !== 'identifier') continue;
+    const constant =
+      decl.parent?.type === 'lexical_declaration' &&
+      decl.parent.child(0)?.text === 'const';
+    bindings.push([
+      name.text,
+      constant ? (decl.childForFieldName('value')?.text ?? '') : '',
+    ]);
+  }
+  for (const id of descendants(root, [
+    'assignment_expression',
+    'augmented_assignment_expression',
+    'update_expression',
+  ])) {
+    const target =
+      id.childForFieldName('left') ?? id.childForFieldName('argument');
+    if (target?.type === 'identifier') bindings.push([target.text, '']);
+  }
+  return literalConstants(bindings);
+}
+
+function count(root: Node): Counts {
+  const calls = descendants(root, ['call_expression']);
+  const named = (re: RegExp) =>
+    calls.filter((c) =>
+      // `it?.skip(…)` declares a test too.
+      re.test(callee(c.childForFieldName('function')).replace(/\?\./g, '.')),
+    );
+  const dead = deadCode(
+    (_, parent) =>
+      parent.type === 'call_expression' &&
+      emptyEach(parent.childForFieldName('function')),
+    constants(root),
+  );
+  const tests = named(TEST_CALL);
+  const deadTests = tests.filter(dead).length;
+  return {
+    tests: tests.length - deadTests,
+    deadTests,
+    // `catch` takes every error; it swallows unless it fails the test.
+    ...countAssertions(root, named(ASSERT_CALL), {
+      dead,
+      swallowed: (node) =>
+        insideSwallowingCatch(node) ||
+        insideSwallowingTry(
+          node,
+          ['try_statement'],
+          (tryNode) => ignores(tryNode.childForFieldName('handler')),
+          ignores,
+        ),
+      helper,
+    }),
+  };
+}
+
 export const js: LanguageSpec = {
   // With strings and comments blanked, a `\u` left is in an identifier:
   // `it.skip` is `it.skip`.
@@ -248,31 +519,7 @@ export const js: LanguageSpec = {
   // `(?<![\w$.])` keeps `regex.test(`, `profit(` and `obj.expect(` out.
   assertions: /(?<![\w$.])(?:expect(?:\.soft)?|assert(?:\.\w+)?)\s*\(/g,
   treeSkips,
-  count: (root) => {
-    const calls = descendants(root, ['call_expression']);
-    const named = (re: RegExp) =>
-      calls.filter((c) =>
-        // `it?.skip(…)` declares a test too.
-        re.test(callee(c.childForFieldName('function')).replace(/\?\./g, '.')),
-      );
-    return {
-      tests: named(TEST_CALL).length,
-      // `catch` takes every error; it swallows unless it fails the test.
-      ...countAssertions(named(ASSERT_CALL), (node) =>
-        insideSwallowingTry(node, ['try_statement'], (tryNode) => {
-          const handler = tryNode.childForFieldName('handler');
-          return (
-            handler !== null &&
-            !reportsFailure(
-              handler.childForFieldName('body')?.text ?? '',
-              HANDLER_FAILS,
-              ALWAYS_PASSES,
-            )
-          );
-        }),
-      ),
-    };
-  },
+  count,
   skips: (code) => {
     const patterns = [...SKIPS, ...redefinitions(runnerNames(code))];
     // The test callback's context under any name: `(c) => { c.skip() }`.
