@@ -1543,3 +1543,67 @@ describe('TG008, red-team re-check', () => {
     expect(judge(path, from, to)).toEqual([]);
   });
 });
+
+describe('M11c: tests that check nothing', () => {
+  it('TG003 names assertions that never run', () => {
+    expect(
+      check({
+        before: file('a.test.js', ...JS_BEFORE),
+        after: file(
+          'a.test.js',
+          "it('adds', () => {",
+          '  return;',
+          '  expect(add(1, 2)).toBe(3);',
+          '  expect(add(2, 2)).toBe(4);',
+          '});',
+          ...JS_BEFORE.slice(4),
+        ),
+      }),
+    ).toEqual([
+      {
+        ruleId: 'TG003',
+        line: undefined,
+        message: 'assertions 3 → 1 (2 in code that never runs)',
+      },
+    ]);
+  });
+
+  it('TG002 names tests that never run', () => {
+    expect(
+      check({
+        before: file('a.test.js', ...JS_BEFORE),
+        after: file(
+          'a.test.js',
+          ...JS_BEFORE.slice(0, 4),
+          'if (false) {',
+          ...JS_BEFORE.slice(4),
+          '}',
+        ),
+      }).map((f) => [f.ruleId, f.message]),
+    ).toEqual([
+      ['TG002', 'test cases 2 → 1 (1 in code that never runs)'],
+      ['TG003', 'assertions 3 → 2 (1 in code that never runs)'],
+    ]);
+  });
+
+  it('TG004 reports a new mock of the module under test', () => {
+    expect(
+      check({
+        before: file('src/add.test.js', ...JS_BEFORE),
+        after: file('src/add.test.js', "vi.mock('./add');", ...JS_BEFORE),
+      }),
+    ).toEqual([
+      { ruleId: 'TG004', line: 1, message: "added `vi.mock('./add')`" },
+    ]);
+  });
+
+  it('accepts the same dead code moved around', () => {
+    const dead = ['if (false) {', "  it('old', () => expect(1).toBe(2));", '}'];
+    expect(
+      check({
+        before: file('a.test.js', ...dead, ...JS_BEFORE),
+        after: file('a.test.js', ...JS_BEFORE, ...dead),
+      }),
+    ).toEqual([]);
+  });
+});

@@ -2,9 +2,13 @@ import type { Node } from 'web-tree-sitter';
 import {
   type Counts,
   callee,
+  caughtIn,
   countAssertions,
+  deadCode,
   descendants,
+  type Helper,
   insideSwallowingTry,
+  literalConstants,
   reportsFailure,
 } from './ast.js';
 import type { LanguageSpec } from './index.js';
@@ -85,8 +89,12 @@ function importedSkips(code: string): string[] {
 // pytest collects `test*` functions at module level and `test*` methods of
 // `Test*` classes; unittest collects methods of TestCase subclasses. A
 // function defined again under the same name replaces the earlier one.
-function countTests(root: Node): number {
+function countTests(
+  root: Node,
+  dead: (node: Node) => boolean,
+): Pick<Counts, 'tests' | 'deadTests'> {
   const tests = new Set<string>();
+  const deadTests = new Set<string>();
   const visit = (node: Node, path: string[], collected: boolean) => {
     for (const child of node.namedChildren) {
       if (!child) continue;
@@ -97,7 +105,7 @@ function countTests(root: Node): number {
       const name = def?.childForFieldName('name')?.text ?? '';
       if (def?.type === 'function_definition') {
         if (collected && name.startsWith('test')) {
-          tests.add([...path, name].join('.'));
+          (dead(def) ? deadTests : tests).add([...path, name].join('.'));
         }
         continue; // nested functions are never collected
       }
@@ -116,7 +124,83 @@ function countTests(root: Node): number {
     }
   };
   visit(root, [], true);
-  return tests.size;
+  for (const name of tests) deadTests.delete(name);
+  return { tests: tests.size, deadTests: deadTests.size };
+}
+
+// `@pytest.mark.parametrize("x", [])`: no cases, nothing runs.
+function emptyParametrize(decorated: Node): boolean {
+  return decorated.namedChildren.some((decorator) => {
+    const call =
+      decorator?.type === 'decorator' ? decorator.namedChildren[0] : null;
+    if (
+      call?.type !== 'call' ||
+      !/(?:^|\.)parametrize$/.test(callee(call.childForFieldName('function')))
+    ) {
+      return false;
+    }
+    const args = call.childForFieldName('arguments')?.namedChildren ?? [];
+    const values =
+      args
+        .find(
+          (a) =>
+            a?.type === 'keyword_argument' &&
+            a.childForFieldName('name')?.text === 'argvalues',
+        )
+        ?.childForFieldName('value') ?? args[1];
+    return /^(?:\[\]|\(\))$/.test(callee(values ?? null));
+  });
+}
+
+const enclosing = (node: Node) => {
+  let fn = node.parent;
+  while (fn && fn.type !== 'function_definition' && fn.type !== 'lambda') {
+    fn = fn.parent;
+  }
+  return fn;
+};
+
+// The function a node runs in, unless it is a test or a lambda. Only a
+// function nested in another one is out of reach of other files and of
+// the runner (fixtures, `setUp`).
+function helper(node: Node): Helper | null {
+  const fn = enclosing(node);
+  const name =
+    fn?.type === 'function_definition' ? fn.childForFieldName('name') : null;
+  if (!fn || !name || name.text.startsWith('test')) return null;
+  return {
+    name,
+    local:
+      fn.parent?.type !== 'decorated_definition' &&
+      enclosing(fn)?.type === 'function_definition',
+  };
+}
+
+// `SKIP = True`, and every other binding of a name.
+function constants(root: Node): Map<string, string> {
+  const bindings: [string, string][] = [];
+  for (const node of descendants(root, [
+    'assignment',
+    'augmented_assignment',
+    'parameters',
+    'for_statement',
+  ])) {
+    if (node.type === 'parameters') {
+      for (const id of descendants(node, ['identifier'])) {
+        bindings.push([id.text, '']);
+      }
+      continue;
+    }
+    const left = node.childForFieldName('left');
+    if (left?.type !== 'identifier') continue;
+    bindings.push([
+      left.text,
+      node.type === 'assignment'
+        ? (node.childForFieldName('right')?.text ?? '')
+        : '',
+    ]);
+  }
+  return literalConstants(bindings);
 }
 
 // Exception types that catch an assertion's failure.
@@ -142,15 +226,23 @@ function swallows(node: Node): boolean {
       );
     });
   }
-  return node.namedChildren.some((clause) => {
-    if (clause?.type !== 'except_clause') return false;
-    const [, types = '', body = ''] =
-      /^except\*?([^:]*):([\s\S]*)$/.exec(clause.text) ?? [];
-    return (
-      (types.trim() === '' || CATCHES_ASSERTIONS.test(types)) &&
-      !reportsFailure(body, HANDLER_FAILS, ALWAYS_PASSES)
-    );
-  });
+  return node.namedChildren.some((clause) => clause && ignores(clause));
+}
+
+// An `except` clause that catches assertion failures and drops them.
+function ignores(clause: Node): boolean {
+  if (clause.type !== 'except_clause') return false;
+  const [, types = '', body = ''] =
+    /^except\*?([^:]*):([\s\S]*)$/.exec(clause.text) ?? [];
+  return (
+    (types.trim() === '' || CATCHES_ASSERTIONS.test(types)) &&
+    !reportsFailure(
+      body,
+      HANDLER_FAILS,
+      ALWAYS_PASSES,
+      caughtIn(clause, /\bas\s+(\w+)\s*$/.exec(types)?.[1]),
+    )
+  );
 }
 
 const ASSERT_CALL = /^(?:self\.assert\w*|pytest\.raises)$/;
@@ -162,11 +254,26 @@ function count(root: Node): Counts {
       ASSERT_CALL.test(callee(c.childForFieldName('function'))),
     ),
   ];
+  const dead = deadCode(
+    (node, parent) =>
+      parent.type === 'decorated_definition' &&
+      parent.childForFieldName('definition')?.id === node.id &&
+      emptyParametrize(parent),
+    constants(root),
+  );
   return {
-    tests: countTests(root),
-    ...countAssertions(assertions, (node) =>
-      insideSwallowingTry(node, ['try_statement', 'with_statement'], swallows),
-    ),
+    ...countTests(root, dead),
+    ...countAssertions(root, assertions, {
+      dead,
+      swallowed: (node) =>
+        insideSwallowingTry(
+          node,
+          ['try_statement', 'with_statement'],
+          swallows,
+          ignores,
+        ),
+      helper,
+    }),
   };
 }
 

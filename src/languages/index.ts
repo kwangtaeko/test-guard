@@ -9,11 +9,12 @@ import { parse } from './syntax.js';
 
 export interface LanguageSpec {
   strip(source: string): string;
-  // Tests, assertions and swallowed assertions, on the stripped code's tree.
+  // Tests and assertions, and those that can't fail the test, on the
+  // stripped code's tree.
   count(root: Node): Counts;
   // Skips found on the tree of the original source, where the patterns
   // fall short (string values, imports, variables).
-  treeSkips?(root: Node): SkipMatch[];
+  treeSkips?(root: Node, path: string): SkipMatch[];
   // An assertion on one stripped line (TG007, TG008).
   assertions: RegExp;
   // A function when the pattern depends on the file (imported aliases).
@@ -30,6 +31,8 @@ export interface Analysis {
   lines: string[]; // stripped lines, same numbering as the source
   skips: SkipMatch[];
   swallowed: number; // assertions left out of stats because failures are caught
+  unreachable: number; // assertions left out of stats because they never run
+  deadTests: number; // tests left out of stats because they never run
 }
 
 const SPECS: Record<Language, LanguageSpec> = { js, python, java };
@@ -65,7 +68,7 @@ export function analyzeSource(
     try {
       // One report per line: the patterns may have seen it already.
       const lines = new Set(matches.map((m) => m.line));
-      for (const match of spec.treeSkips(raw.rootNode)) {
+      for (const match of spec.treeSkips(raw.rootNode, path)) {
         if (!lines.has(match.line)) matches.push(match);
         lines.add(match.line);
       }
@@ -85,6 +88,8 @@ export function analyzeSource(
     lines: code.split('\n'),
     skips: matches,
     swallowed: counts.swallowed,
+    unreachable: counts.unreachable,
+    deadTests: counts.deadTests,
   };
 }
 
