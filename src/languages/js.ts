@@ -1,5 +1,6 @@
 import type { Node } from 'web-tree-sitter';
 import {
+  type Check,
   type Counts,
   callee,
   caughtIn,
@@ -507,6 +508,49 @@ function count(root: Node): Counts {
   };
 }
 
+const EQUALS = /^(?:toBe|toEqual|toStrictEqual|equal|equals|eql)$/;
+const ASSERT_EQUALS =
+  /^assert\.(?:equal|strictEqual|deepEqual|deepStrictEqual)$/;
+
+// `expect(a).toBe(b)`, chai `expect(a).to.deep.equal(b)` (without `.not`),
+// `assert.equal(a, b)`.
+function checks(root: Node): Check[] {
+  const found: Check[] = [];
+  for (const call of descendants(root, ['call_expression'])) {
+    const fn = call.childForFieldName('function');
+    const args = (
+      call.childForFieldName('arguments')?.namedChildren ?? []
+    ).filter((a): a is Node => a !== null);
+    const [first, second] = args;
+    if (ASSERT_EQUALS.test(callee(fn)) && first && second) {
+      found.push({ node: call, sides: [first, second] });
+      continue;
+    }
+    if (
+      fn?.type !== 'member_expression' ||
+      !EQUALS.test(fn.childForFieldName('property')?.text ?? '') ||
+      !first ||
+      second
+    ) {
+      continue;
+    }
+    let object = fn.childForFieldName('object');
+    while (
+      object?.type === 'member_expression' &&
+      object.childForFieldName('property')?.text !== 'not'
+    ) {
+      object = object.childForFieldName('object');
+    }
+    const subject =
+      object?.type === 'call_expression' &&
+      /^expect(?:\.soft)?$/.test(callee(object.childForFieldName('function')))
+        ? object.childForFieldName('arguments')?.namedChildren[0]
+        : null;
+    if (subject) found.push({ node: call, sides: [subject, first] });
+  }
+  return found;
+}
+
 export const js: LanguageSpec = {
   // With strings and comments blanked, a `\u` left is in an identifier:
   // `it.skip` is `it.skip`.
@@ -520,6 +564,7 @@ export const js: LanguageSpec = {
   assertions: /(?<![\w$.])(?:expect(?:\.soft)?|assert(?:\.\w+)?)\s*\(/g,
   treeSkips,
   count,
+  checks,
   skips: (code) => {
     const patterns = [...SKIPS, ...redefinitions(runnerNames(code))];
     // The test callback's context under any name: `(c) => { c.skip() }`.

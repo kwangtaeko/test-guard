@@ -1,7 +1,7 @@
 import type { Node } from 'web-tree-sitter';
 import { normalizePath } from '../paths.js';
 import type { FileStats, Language } from '../types.js';
-import type { Counts } from './ast.js';
+import type { Check, Counts } from './ast.js';
 import { java } from './java.js';
 import { js } from './js.js';
 import { python } from './python.js';
@@ -12,6 +12,8 @@ export interface LanguageSpec {
   // Tests and assertions, and those that can't fail the test, on the
   // stripped code's tree.
   count(root: Node): Counts;
+  // Equality checks, on the stripped code's tree (TG007).
+  checks(root: Node): Check[];
   // Skips found on the tree of the original source, where the patterns
   // fall short (string values, imports, variables).
   treeSkips?(root: Node, path: string): SkipMatch[];
@@ -33,6 +35,13 @@ export interface Analysis {
   swallowed: number; // assertions left out of stats because failures are caught
   unreachable: number; // assertions left out of stats because they never run
   deadTests: number; // tests left out of stats because they never run
+  checks: EqualityCheck[];
+}
+
+export interface EqualityCheck {
+  start: number; // lines, 1-based
+  end: number;
+  sides: [string, string]; // source text without whitespace
 }
 
 const SPECS: Record<Language, LanguageSpec> = { js, python, java };
@@ -52,19 +61,35 @@ export function analyzeSource(
   language: Language,
 ): Analysis {
   const spec = SPECS[language];
-  const code = spec.strip(toLf(source));
+  const lf = toLf(source);
+  const code = spec.strip(lf);
   const skips =
     typeof spec.skips === 'function' ? spec.skips(code) : spec.skips;
   const tree = parse(language, code);
   let counts: Counts;
+  let checks: EqualityCheck[] = [];
   try {
     counts = spec.count(tree.rootNode);
+    // Compared on the source, where strings aren't blanked; skipped when
+    // decoded escapes moved the offsets.
+    if (code.length === lf.length) {
+      const text = (n: Node) =>
+        lf
+          .slice(n.startIndex, n.endIndex)
+          .replace(/\s+/g, '')
+          .replace(/,(?=[)\]}])/g, '');
+      checks = spec.checks(tree.rootNode).map(({ node, sides }) => ({
+        start: node.startPosition.row + 1,
+        end: node.endPosition.row + 1,
+        sides: [text(sides[0]), text(sides[1])],
+      }));
+    }
   } finally {
     tree.delete(); // WASM memory isn't garbage-collected
   }
   const matches = findMatches(code, skips);
   if (spec.treeSkips) {
-    const raw = parse(language, toLf(source));
+    const raw = parse(language, lf);
     try {
       // One report per line: the patterns may have seen it already.
       const lines = new Set(matches.map((m) => m.line));
@@ -90,6 +115,7 @@ export function analyzeSource(
     swallowed: counts.swallowed,
     unreachable: counts.unreachable,
     deadTests: counts.deadTests,
+    checks,
   };
 }
 

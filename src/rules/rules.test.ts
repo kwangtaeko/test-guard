@@ -1607,3 +1607,311 @@ describe('M11c: tests that check nothing', () => {
     ).toEqual([]);
   });
 });
+
+describe('M11d: subject comparison and expected values in variables', () => {
+  const replaced = (subject: string) => [
+    'TG007',
+    `replaced the expected value with the value under test \`${subject}\``,
+  ];
+
+  it.each([
+    [
+      'a.test.js',
+      'it("x", () => { expect(add(1, 2)).toBe(4); });',
+      'it("x", () => { expect(add(1, 2)).toBe(add(1,2)); });',
+      'add(1,2)',
+    ],
+    [
+      'a.test.js',
+      'it("x", () => { assert.deepEqual(parse("a"), ["b"]); });',
+      'it("x", () => { assert.deepEqual(parse("a"), parse("a")); });',
+      'parse("a")',
+    ],
+    [
+      'a.test.js',
+      'it("x", () => { expect(r).to.deep.equal([1]); });',
+      'it("x", () => { expect(r).to.deep.equal(r); });',
+      'r',
+    ],
+    [
+      'test_a.py',
+      'def test_a():\n    assert total(c) == 3',
+      'def test_a():\n    assert total(c) == total(c)',
+      'total(c)',
+    ],
+    [
+      'test_a.py',
+      'def test_a(self):\n    self.assertEqual(3, total(c))',
+      'def test_a(self):\n    self.assertEqual(total(c), total(c))',
+      'total(c)',
+    ],
+    [
+      'src/test/java/ATest.java',
+      'class ATest { @Test void a() { assertEquals("msg", 4, roman("IV")); } }',
+      'class ATest { @Test void a() { assertEquals("msg", roman("IV"), roman("IV")); } }',
+      'roman("IV")',
+    ],
+    [
+      'src/test/java/ATest.java',
+      'class ATest { @Test void a() { assertThat(roman("IV")).isEqualTo(5); } }',
+      'class ATest { @Test void a() { assertThat(roman("IV")).isEqualTo(roman("IV")); } }',
+      'roman("IV")',
+    ],
+  ])('TG007 %s: %s → %s', (path, from, to, subject) => {
+    expect(
+      check({ before: file(path, from), after: file(path, to) }).map((f) => [
+        f.ruleId,
+        f.message,
+      ]),
+    ).toEqual([replaced(subject)]);
+  });
+
+  it.each([
+    // An equality test of the code (`equals`, determinism) is new, not a
+    // replaced expected value.
+    [
+      'a.test.js',
+      'it("x", () => { expect(a).toBe(1); });',
+      'it("x", () => { expect(a).toBe(1); expect(make()).toEqual(make()); });',
+    ],
+    // Strings differ though the stripped code is the same.
+    [
+      'a.test.js',
+      'it("x", () => { expect("a").toBe(f()); });',
+      'it("x", () => { expect("a").toBe("b"); });',
+    ],
+    // `.not` isn't an equality check.
+    [
+      'a.test.js',
+      'it("x", () => { expect(r).toBe(1); });',
+      'it("x", () => { expect(r).toBe(1); expect(r).not.toBe(r2); });',
+    ],
+  ])('no TG007 subject finding: %s', (path, from, to) => {
+    expect(
+      check({ before: file(path, from), after: file(path, to) }).filter((f) =>
+        f.message.startsWith('replaced'),
+      ),
+    ).toEqual([]);
+  });
+
+  const judge = (path: string, from: string[], to: string[]) =>
+    compareFiles(
+      { before: file(path, ...from), after: file(path, ...to) },
+      { ...ctx, implementationChanged: false },
+      ['TG008'],
+    ).map(({ line, message }) => [line, message]);
+
+  it.each([
+    [
+      'test/clamp.test.js',
+      [
+        "test('clamps', () => {",
+        '  const expected = 10;',
+        '  expect(clamp(11, 0, 10)).toBe(expected);',
+        '});',
+      ],
+      2,
+      '`const expected = 10;` → `const expected = 11;`',
+    ],
+    [
+      'tests/test_a.py',
+      [
+        'EXPECTED = {"hi": 2}',
+        'def test_a():',
+        '    assert word_count("Hi hi") == EXPECTED',
+      ],
+      1,
+      '`EXPECTED = {"hi": 2}` → `EXPECTED = {"hi": 3}`',
+    ],
+    [
+      'src/test/java/ATest.java',
+      [
+        'class ATest {',
+        '  private static final int EXPECTED = 4;',
+        '  @Test void a() { assertEquals(EXPECTED, roman("IV")); }',
+        '}',
+      ],
+      2,
+      '`private static final int EXPECTED = 4;` → `private static final int EXPECTED = 5;`',
+    ],
+  ])(
+    'TG008 %s: a changed expected value in a variable',
+    (path, lines, line, change) => {
+      const changed = lines.map((l, i) =>
+        i === line - 1 ? l.replace(/10|2|4/, (n) => String(Number(n) + 1)) : l,
+      );
+      expect(judge(path, lines, changed)).toEqual([
+        [
+          line,
+          `changed asserted values without changing the implementation: ${change}`,
+        ],
+      ]);
+    },
+  );
+
+  it.each([
+    // Not used by an assertion.
+    [
+      'test/a.test.js',
+      ['const timeout = 10;', "test('a', () => { expect(f()).toBe(1); });"],
+      ['const timeout = 20;', "test('a', () => { expect(f()).toBe(1); });"],
+    ],
+    // Computed by code: the call is what the test runs.
+    [
+      'test/a.test.js',
+      [
+        "test('a', () => {",
+        '  const result = add(2, 3);',
+        '  expect(result).toBe(5);',
+        '});',
+      ],
+      [
+        "test('a', () => {",
+        '  const result = add(2, 3, 0);',
+        '  expect(result).toBe(5);',
+        '});',
+      ],
+    ],
+    // A keyword argument, not a variable.
+    [
+      'tests/test_a.py',
+      [
+        'def test_a():',
+        '    r = f(',
+        '        r=1,',
+        '    )',
+        '    assert r == 2',
+      ],
+      [
+        'def test_a():',
+        '    r = f(',
+        '        r=3,',
+        '    )',
+        '    assert r == 2',
+      ],
+    ],
+  ])('no TG008 for %s', (path, from, to) => {
+    expect(judge(path, from, to)).toEqual([]);
+  });
+});
+
+describe('M11d, red-team re-check', () => {
+  const tg007 = (path: string, from: string[], to: string[]) =>
+    check({ before: file(path, ...from), after: file(path, ...to) })
+      .filter((f) => f.message.startsWith('replaced'))
+      .map((f) => f.message);
+  const tg008 = (path: string, from: string[], to: string[]) =>
+    compareFiles(
+      { before: file(path, ...from), after: file(path, ...to) },
+      { ...ctx, implementationChanged: false },
+      ['TG008'],
+    ).map(({ message }) => message);
+  const it_ = (...body: string[]) => ["it('x', () => {", ...body, '});'];
+
+  it.each([
+    // The subject or the expected value held in a name.
+    [
+      it_('  expect(add(1, 2)).toBe(3);'),
+      it_('  const r = add(1, 2);', '  expect(r).toBe(r);'),
+    ],
+    [
+      it_('  expect(add(1, 2)).toBe(3);'),
+      it_(
+        '  const expected = add(1, 2);',
+        '  expect(add(1, 2)).toBe(expected);',
+      ),
+    ],
+  ])('TG007 follows names: %j', (from, to) => {
+    expect(tg007('a.test.js', from, to)).toEqual([
+      'replaced the expected value with the value under test `add(1,2)`',
+    ]);
+  });
+
+  it.each([
+    [
+      'class ATest { @Test void a() { assertThat(roman("IV")).as("iv").isEqualTo(4); } }',
+      'class ATest { @Test void a() { assertThat(roman("IV")).as("iv").isEqualTo(roman("IV")); } }',
+    ],
+    [
+      'class ATest { @Test void a() { assertThat(roman("IV"), is(4)); } }',
+      'class ATest { @Test void a() { assertThat(roman("IV"), is(equalTo(roman("IV")))); } }',
+    ],
+  ])('TG007 Java %s', (from, to) => {
+    expect(tg007('src/test/java/ATest.java', [from], [to])).toEqual([
+      'replaced the expected value with the value under test `roman("IV")`',
+    ]);
+  });
+
+  it('TG007 leaves a reformatted check next to a new determinism test', () => {
+    expect(
+      tg007(
+        'a.test.js',
+        it_('  expect(make()).toEqual({ a: 1 });'),
+        it_(
+          '  expect(make()).toEqual({',
+          '    a: 1,',
+          '  });',
+          '  expect(make()).toEqual(make());',
+        ),
+      ),
+    ).toEqual([]);
+  });
+
+  it.each([
+    // Moved into a variable and changed in one step, and back.
+    [
+      it_('  expect(clamp(11, 0, 10)).toBe(10);'),
+      it_(
+        '  const expected = 11;',
+        '  expect(clamp(11, 0, 10)).toBe(expected);',
+      ),
+    ],
+    [
+      it_(
+        '  const expected = 10;',
+        '  expect(clamp(11, 0, 10)).toBe(expected);',
+      ),
+      it_('  expect(clamp(11, 0, 10)).toBe(11);'),
+    ],
+  ])('TG008 one step: %j', (from, to) => {
+    expect(tg008('test/clamp.test.js', from, to)).toHaveLength(1);
+  });
+
+  it.each([
+    // Prettier's trailing comma.
+    [
+      it_(
+        '  const expected = { a: 1, b: 2 };',
+        '  expect(f()).toEqual(expected);',
+      ),
+      it_(
+        '  const expected = {',
+        '    a: 1,',
+        '    b: 2,',
+        '  };',
+        '  expect(f()).toEqual(expected);',
+      ),
+    ],
+    // A property of the subject isn't an expected value.
+    [
+      [
+        'const limit = 10;',
+        ...it_('  expect(cfg.limit).toBe(5);', '  expect(run(limit)).toBe(1);'),
+      ],
+      [
+        'const limit = 20;',
+        ...it_('  expect(cfg.limit).toBe(5);', '  expect(run(limit)).toBe(1);'),
+      ],
+    ],
+    // Moved into a variable without changing it.
+    [
+      it_('  expect(clamp(11, 0, 10)).toBe(10);'),
+      it_(
+        '  const expected = 10;',
+        '  expect(clamp(11, 0, 10)).toBe(expected);',
+      ),
+    ],
+  ])('no TG008: %j', (from, to) => {
+    expect(tg008('test/a.test.js', from, to)).toEqual([]);
+  });
+});

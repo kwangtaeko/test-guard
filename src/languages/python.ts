@@ -1,5 +1,6 @@
 import type { Node } from 'web-tree-sitter';
 import {
+  type Check,
   type Counts,
   callee,
   caughtIn,
@@ -277,8 +278,45 @@ function count(root: Node): Counts {
   };
 }
 
+const ASSERT_EQUAL =
+  /^self\.assert(?:Equals?|Is|ListEqual|DictEqual|TupleEqual|SetEqual|SequenceEqual|CountEqual|MultiLineEqual)$/;
+
+// `assert a == b`, `assert a is b`, `self.assertEqual(a, b)`.
+function checks(root: Node): Check[] {
+  const found: Check[] = [];
+  for (const node of descendants(root, ['assert_statement'])) {
+    let test = node.namedChildren[0] ?? null;
+    while (test?.type === 'parenthesized_expression') {
+      test = test.namedChildren[0] ?? null;
+    }
+    if (test?.type !== 'comparison_operator') continue;
+    const [left, right, extra] = test.namedChildren;
+    const operators = test.children.filter((c) => c && !c.isNamed);
+    if (
+      left &&
+      right &&
+      !extra &&
+      operators.length === 1 &&
+      /^(?:==|is)$/.test(operators[0]?.text ?? '')
+    ) {
+      found.push({ node, sides: [left, right] });
+    }
+  }
+  for (const call of descendants(root, ['call'])) {
+    if (!ASSERT_EQUAL.test(callee(call.childForFieldName('function')))) {
+      continue;
+    }
+    const [first, second] = (
+      call.childForFieldName('arguments')?.namedChildren ?? []
+    ).filter((a): a is Node => a !== null && a.type !== 'keyword_argument');
+    if (first && second) found.push({ node: call, sides: [first, second] });
+  }
+  return found;
+}
+
 export const python: LanguageSpec = {
   strip: stripPython,
+  checks,
   assertions:
     /(?<![\w.])assert(?=[\s(])|(?<![\w.])self\.assert\w*\s*\(|(?<![\w.])pytest\.raises\s*\(/g,
   count,

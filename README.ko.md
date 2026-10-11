@@ -128,8 +128,8 @@ git commit -m "test: skip flaky subtraction" -m "Test-Guard-Approved: tracked in
 | TG004 | skip / disable / focus 추가: `it.skip`, `xit`, `.only`, `.todo`, `test.failing`, `{ skip: true }`, `this.skip()`, `@pytest.mark.skip`(import 별칭 포함), `xfail`, `__test__ = False`, `@Disabled`, `@Ignore`, `Assumptions.abort()`, TestNG `enabled = false` 등 — 그리고 파일 안에서 테스트·assertion 함수를 바꿔치기한 경우(`const expect = …`, 기본 matcher를 덮어쓰는 `expect.extend`, 로컬 `assertEquals`, JUnit이 아닌 `Test` 어노테이션, `sum.test.ts`의 `vi.mock('./sum')`) |
 | TG005 | 테스트 러너 설정 변조: `passWithNoTests`, `testPathIgnorePatterns`, `setupFiles`/`globalSetup`, pytest `addopts`의 `-k`/`--deselect`/`--ignore`, `collect_ignore`, `conftest.py`의 `pytest_*` 훅, Maven `skipTests`/`testFailureIgnore`/`groups`/`includes`, Gradle `enabled = false`/`ignoreFailures`/`excludeTags`, GitHub Actions 테스트 스텝에 붙인 `\|\| true`·`set +e`·`continue-on-error`·`if:`·`-u`·테스트 필터, CI에서 테스트 명령 삭제 등 |
 | TG006 | test-guard 우회: `.test-guard.json` 변경; 훅·CI 파일에서 test-guard를 실행하는 줄의 삭제·변경(`\|\| true`, 훅 matcher 축소, `continue-on-error`); 에이전트의 `git commit --no-verify`, `core.hooksPath`, git alias·include·`GIT_CONFIG_GLOBAL`, `Test-Guard-Approved` 트레일러, `TEST_GUARD_*` 변수, 플러그인 비활성화·제거, `.git/`·`.claude/settings.local.json`·`node_modules/test-guard` 쓰기 |
-| TG007 | assertion 약화: `toBe(3)` → `toBeDefined()` / `not.toBe(…)` / `toBeGreaterThan(…)`, `assertEqual` → `assertTrue` / `assertNotEqual`, `assert x == y` → `assert x != y`, `toThrow(X)` → `toThrow()`, `pytest.raises(ValueError)` → `pytest.raises(Exception)`, 그리고 `expect(true).toBe(true)` 같은 의미 없는 assertion |
-| TG008 | 코드에 맞춰 바꾼 기대값: 구현 파일은 그대로인데 assertion의 값이 바뀜(`toBe(10)` → `toBe(11)`), `.snap` 파일이나 인라인 스냅샷이 바뀜. 커밋·CI·에이전트 종료 시점에 판정합니다(편집마다 판정하지 않으므로 테스트를 먼저 고치고 코드를 나중에 고쳐도 됩니다). 에이전트가 `-u`로 테스트를 돌리는 것도 막습니다 |
+| TG007 | assertion 약화: `toBe(3)` → `toBeDefined()` / `not.toBe(…)` / `toBeGreaterThan(…)`, `assertEqual` → `assertTrue` / `assertNotEqual`, `assert x == y` → `assert x != y`, `toThrow(X)` → `toThrow()`, `pytest.raises(ValueError)` → `pytest.raises(Exception)`, 그리고 `expect(true).toBe(true)` 같은 의미 없는 assertion이나 기대값을 피검 값으로 바꾼 assertion(`expect(add(1, 2))` 아래 `toBe(3)` → `toBe(add(1, 2))`) |
+| TG008 | 코드에 맞춰 바꾼 기대값: 구현 파일은 그대로인데 assertion의 값이 바뀜(`toBe(10)` → `toBe(11)`, 또는 `toBe(expected)`의 `const expected = 10` → `11`), `.snap` 파일이나 인라인 스냅샷이 바뀜. 커밋·CI·에이전트 종료 시점에 판정합니다(편집마다 판정하지 않으므로 테스트를 먼저 고치고 코드를 나중에 고쳐도 됩니다). 에이전트가 `-u`로 테스트를 돌리는 것도 막습니다 |
 | TG009 | 테스트 입력을 코드에 박아 넣기: 기존 테스트가 테스트 대상에 넘기는 값(`'IV'`)을, 그 값을 쓴 적 없는 구현 코드가 새로 비교하고 바로 그 테스트의 기대값을 내놓는 경우(`if (s === 'IV') return 4`). 편집할 때, 커밋, CI, 종료 시점에 판정합니다 |
 
 지원 언어: TypeScript/JavaScript(Jest, Vitest, Mocha), Python(pytest, unittest),
@@ -309,11 +309,14 @@ node scripts/fp-history.mjs /tmp/flask --commits 300
   클래스로 봅니다. 사용자 지정 `norecursedirs`는 읽지 않습니다. 로컬 파일에서 가져온 JS 테스트
   함수(`import { it } from './fake'`)는 따라가 보지 않습니다. 프로젝트가 러너를 감싸는 흔한 방식이기
   때문입니다(Playwright 픽스처).
-- **겉모양은 그대로인데 실제로는 아무것도 검사하지 않는 테스트**는 개수가 그대로라 아직 잡지
-  못합니다: 테스트 앞부분의 `return`, `if (false)` 안의 테스트, 빈 `it.each([])`, 테스트 대상
-  모듈을 mock으로 바꾸기. 문법을 이해하는 분석(계획 중)이 필요합니다. 기대값만 바꾼 경우는
-  TG008이 잡지만, 같은 커밋에서 실제 코드나 의존성이 바뀌었으면(코드가 든 새 소스 파일 포함) 잡지
-  못하고, 기대값을 변수로 옮긴 경우도 잡지 못합니다.
+- **겉모양은 그대로인데 실제로는 아무것도 검사하지 않는 테스트**: 앞부분의 `return`,
+  `if (false)`, 빈 `it.each([])`, 실패를 삼키는 `catch`, 테스트 대상 모듈의 JS mock은 잡지만 모든
+  형태를 잡지는 못합니다: 변수에 담은 표(`cases = []`인 `it.each(cases)`), 객체·클래스 메서드로
+  만든 헬퍼, 테스트 대상 모듈에 건 `vi.spyOn`, Python `mock.patch`나 Mockito로 테스트 대상 바꾸기,
+  테스트가 끝난 뒤 실행되는 검사(`setTimeout`, await하지 않은 Promise). 기대값만 바꾼 경우는
+  TG008이 잡고, `toBe(expected)`·`assertEquals(EXPECTED, …)`처럼 기대값 쪽에 쓰인 변수로 옮겨
+  바꾼 경우도 잡지만, 같은 커밋에서 실제 코드나 의존성이 바뀌었으면(코드가 든 새 소스 파일 포함)
+  잡지 못합니다.
 - **틀린 테스트에 맞춰 바꾼 로직**: TG009는 테스트 입력을 코드에서 비교하는 경우만 잡고, 틀린
   기대값에 맞춰 로직을 바꾼 경우(분기 삭제, 재귀 제거)는 잡지 못합니다. [벤치마크](bench/README.md)에서
   Codex가 불가능한 테스트를 통과시키려고 코드를 바꾼 21건 중 15건이 이 경우였습니다. 수정과

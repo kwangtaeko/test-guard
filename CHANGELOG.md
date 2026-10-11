@@ -2,6 +2,21 @@
 
 ## Unreleased
 
+- TG007: an expected value replaced with the value under test, so the
+  check compares a value with itself (`expect(add(1, 2)).toBe(3)` →
+  `.toBe(add(1, 2))`, `assert total(c) == total(c)`,
+  `assertEquals(roman("IV"), roman("IV"))`, AssertJ
+  `assertThat(x).as("…").isEqualTo(x)`, Hamcrest `assertThat(x, is(x))`),
+  also through a name (`const r = add(1, 2); expect(r).toBe(r)`). Only
+  reported when a check of the same value against something else was
+  removed, so a new `equals` test (`expect(make()).toEqual(make())`) is fine.
+- TG008: an expected value moved into a variable and changed there
+  (`const expected = 10` → `11` with `toBe(expected)`, a Python module
+  constant, a Java `static final` field), or moved and changed in one step
+  (`toBe(10)` → `const expected = 11; …toBe(expected)`). Only names on the
+  expected side of an equality check count; a value passed to the code under
+  test (`expect(f(x))`) is an input and left alone. A trailing comma added
+  by a formatter is no longer read as a changed value.
 - TG002/TG003: tests and assertions that can never fail don't count, so
   hollowing a test out is reported like deleting it: code after a `return`
   or `if (true) return`, under `if (false)` / `while (false)` or the

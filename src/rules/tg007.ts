@@ -1,4 +1,6 @@
+import type { Analysis, EqualityCheck } from '../languages/index.js';
 import type { Language } from '../types.js';
+import { declarations, valueAt } from './declarations.js';
 import type { Rule, RuleFinding } from './types.js';
 
 // Assertion weakening (0.1: matcher swaps only, ROADMAP §3.4).
@@ -147,7 +149,13 @@ function hits(
   return result;
 }
 
-export const tg007: Rule = ({ before, after, hunks }) => {
+export const tg007: Rule = ({
+  before,
+  after,
+  hunks,
+  beforeLines,
+  afterLines,
+}) => {
   if (!after) return [];
   const spec = SPECS[after.stats.language];
   const path = after.stats.path;
@@ -189,6 +197,66 @@ export const tg007: Rule = ({ before, after, hunks }) => {
         path,
         line,
         message: `added meaningless assertion \`${match[0].trim()}\``,
+      });
+    }
+  }
+
+  // Subject comparison: a check that compared a value with something else
+  // removed, and a check of that value against itself added
+  // (`toBe(3)` → `toBe(add(1, 2))` under `expect(add(1, 2))`). A name
+  // stands for the value it was declared with (`const r = add(1, 2)`).
+  if (before) {
+    const resolved = (analysis: Analysis, source: string[]) => {
+      const value = valueAt(
+        declarations(analysis.lines, source, analysis.stats.language),
+      );
+      const resolve = (side: string, line: number) =>
+        /^[A-Za-z_$][\w$]*$/.test(side)
+          ? (value(side, line)?.replace(/\s+/g, '') ?? side)
+          : side;
+      return analysis.checks.map(
+        (c): EqualityCheck => ({
+          ...c,
+          sides: [resolve(c.sides[0], c.start), resolve(c.sides[1], c.start)],
+        }),
+      );
+    };
+    const checksAfter = resolved(after, afterLines);
+    const kept = new Set(checksAfter.map((c) => c.sides.join('\n')));
+    const deleted = new Set(hunks.flatMap((hunk) => hunk.deleted));
+    const added = new Set(hunks.flatMap((hunk) => hunk.added));
+    const lines = (check: EqualityCheck, set: Set<number>) => {
+      const found: number[] = [];
+      for (let n = check.start; n <= check.end; n++) {
+        if (set.has(n)) found.push(n);
+      }
+      return found;
+    };
+    // Removed: on a deleted line, and not still in the file.
+    const removed = resolved(before, beforeLines).filter(
+      (c) =>
+        c.sides[0] !== c.sides[1] &&
+        lines(c, deleted).length > 0 &&
+        !kept.has(c.sides.join('\n')),
+    );
+    const reported = new Set(findings.map((f) => f.line));
+    for (const check of checksAfter) {
+      const [subject, expected] = check.sides;
+      const [line] = lines(check, added);
+      if (
+        subject !== expected ||
+        line === undefined ||
+        reported.has(line) ||
+        !removed.some((r) => r.sides.includes(subject))
+      ) {
+        continue;
+      }
+      reported.add(line);
+      findings.push({
+        ruleId: 'TG007',
+        path,
+        line,
+        message: `replaced the expected value with the value under test \`${subject.length > 60 ? `${subject.slice(0, 57)}...` : subject}\``,
       });
     }
   }

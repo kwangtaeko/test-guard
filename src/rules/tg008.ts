@@ -1,6 +1,12 @@
-import { isAssertionLine } from '../languages/index.js';
+import { type EqualityCheck, isAssertionLine } from '../languages/index.js';
 import type { Language } from '../types.js';
 import { isSnapshot } from '../watched.js';
+import {
+  type Declaration,
+  declarations,
+  statementEnd,
+  valueAt,
+} from './declarations.js';
 import type { Rule, RuleFinding } from './types.js';
 
 // Expected values rewritten to match the code (ROADMAP §12.2 M10): an
@@ -32,12 +38,17 @@ interface Statement {
   start: number; // 1-based, inclusive
   end: number;
   inline: boolean;
+  declares?: string; // a name bound to an expected value
 }
 
 // Assertions, tables and inline snapshots, each extended over the lines its
 // brackets span (Prettier and Black wrap long expected values). Brackets are
 // counted on comment/string-stripped lines.
-function statements(stripped: string[], language: Language): Statement[] {
+function statements(
+  stripped: string[],
+  language: Language,
+  bound: Declaration[],
+): Statement[] {
   const found: Statement[] = [];
   for (let i = 0; i < stripped.length; i++) {
     const line = stripped[i] ?? '';
@@ -45,18 +56,47 @@ function statements(stripped: string[], language: Language): Statement[] {
     if (!inline && !TABLE.test(line) && !isAssertionLine(language, line)) {
       continue;
     }
-    let depth = 0;
-    let end = i;
-    for (let j = i; j < stripped.length && j < i + 200; j++) {
-      for (const ch of stripped[j] ?? '') {
-        if ('([{'.includes(ch)) depth++;
-        else if (')]}'.includes(ch)) depth--;
-      }
-      end = j;
-      if (depth <= 0) break;
-    }
-    found.push({ start: i + 1, end: end + 1, inline });
-    i = end;
+    const last = statementEnd(stripped, i);
+    found.push({ start: i + 1, end: last + 1, inline });
+    i = last;
+  }
+  // Expected values moved out of the assertions into names:
+  // `const expected = 11` with `expect(add(5, 5)).toBe(expected)`.
+  for (const d of bound) {
+    found.push({ start: d.start, end: d.end, inline: false, declares: d.name });
+  }
+  return found;
+}
+
+// Code rather than a value: a call, a function.
+const CALL = /[\w$\]>)]\s*\(|=>|\bfunction\b|\blambda\b/;
+
+// A declaration whose value has no code in it, judged on stripped lines.
+const literal = (stripped: string[], d: Declaration) =>
+  !CALL.test(
+    stripped
+      .slice(d.start - 1, d.end)
+      .join('\n')
+      .replace(/^[^=]*=/, ''),
+  );
+
+// Names on the expected side of equality checks: a side with no call, and
+// not on the other side. A name passed to the code under test is an input
+// (`expect(f(x)).toBe(2)`), left alone.
+function expectedNames(checks: EqualityCheck[]): Set<string> {
+  const names = (side: string) =>
+    new Set(
+      side
+        .replace(/(['"`])(?:\\.|(?!\1)[^\\])*\1/g, '')
+        .match(/(?<![\w$.])[A-Za-z_$][\w$]*/g),
+    );
+  const found = new Set<string>();
+  for (const { sides } of checks) {
+    sides.forEach((side, i) => {
+      if (CALL.test(side)) return;
+      const other = names(sides[1 - i] ?? '');
+      for (const name of names(side)) if (!other.has(name)) found.add(name);
+    });
   }
   return found;
 }
@@ -78,27 +118,41 @@ interface Shape {
 
 // Brackets and commas shape a value (`[[1, 2], [3]]` vs `[[1, 2, 3]]`);
 // other punctuation, such as an operator, is left to TG007. A test title
-// (`it('…', …)` on the same line) and comments aren't values.
-function shape(text: string, language: Language): Shape {
+// (`it('…', …)` on the same line), comments and a trailing comma aren't
+// values. A name bound to an expected value stands for that value
+// (`resolve`), so moving the value into a variable keeps the shape.
+function shape(
+  text: string,
+  language: Language,
+  resolve?: (name: string) => string | undefined,
+): Shape {
   const code: string[] = [];
   const values: string[] = [];
-  let title = false;
-  for (const [token] of text.matchAll(TOKEN)) {
+  const tokens = [...text.matchAll(TOKEN)]
+    .map(([token]) => token)
     // Comments; `#` starts one only in Python.
-    if (/^\/[/*]/.test(token) || (language === 'python' && token[0] === '#')) {
-      continue;
-    }
+    .filter(
+      (t) => !/^\/[/*]/.test(t) && !(language === 'python' && t[0] === '#'),
+    );
+  let title = false;
+  tokens.forEach((token, i) => {
     if (title && /^['"`]/.test(token)) {
       title = false;
-      continue;
+      return;
     }
     title =
       (/^(?:it|test|specify|describe)$/.test(token) && code.length === 0) ||
       (title && token === '(');
-    if (/^['"`\d[\]{},]/.test(token) || LITERAL_WORDS.has(token)) {
+    if (token === ',' && /^[)\]}]$/.test(tokens[i + 1] ?? '')) return;
+    const value = tokens[i - 1] === '.' ? undefined : resolve?.(token);
+    if (value !== undefined) {
+      const inner = shape(value, language);
+      code.push(...(inner.code ? [inner.code] : []));
+      values.push(...inner.values);
+    } else if (/^['"`\d[\]{},]/.test(token) || LITERAL_WORDS.has(token)) {
       values.push(normalize(token));
     } else if (/^[A-Za-z_$]/.test(token)) code.push(token);
-  }
+  });
   return { code: code.join(' '), values };
 }
 
@@ -170,17 +224,39 @@ export const tg008: Rule = ({
       for (let n = s.start; n <= s.end; n++) if (lines.has(n)) return true;
       return false;
     });
-  const old = touched(statements(before.lines, language), deleted);
+  const expected = expectedNames([...before.checks, ...after.checks]);
+  const bound = (stripped: string[], source: string[]) =>
+    declarations(stripped, source, language).filter(
+      (d) => expected.has(d.name) && literal(stripped, d),
+    );
+  const boundBefore = bound(before.lines, beforeLines);
+  const boundAfter = bound(after.lines, afterLines);
+  // A statement's shape, its names bound to expected values resolved.
+  const shapeOf = (
+    s: Statement,
+    source: string[],
+    list: Declaration[],
+  ): Shape => {
+    const value = valueAt(list);
+    return shape(
+      source.slice(s.start - 1, s.end).join('\n'),
+      language,
+      s.declares ? undefined : (name) => value(name, s.start),
+    );
+  };
+  const old = touched(statements(before.lines, language, boundBefore), deleted);
   const findings: RuleFinding[] = [];
-  for (const statement of touched(statements(after.lines, language), added)) {
+  for (const statement of touched(
+    statements(after.lines, language, boundAfter),
+    added,
+  )) {
     const newLines = afterLines.slice(statement.start - 1, statement.end);
-    const newShape = shape(newLines.join('\n'), language);
+    const newShape = shapeOf(statement, afterLines, boundAfter);
     // Paired by code anywhere in the file: a reordered block still pairs.
     const pair = old.findIndex(
       (s) =>
         s.inline === statement.inline &&
-        shape(beforeLines.slice(s.start - 1, s.end).join('\n'), language)
-          .code === newShape.code,
+        shapeOf(s, beforeLines, boundBefore).code === newShape.code,
     );
     if (pair === -1) continue; // a new assertion
     const [match] = old.splice(pair, 1);
@@ -201,7 +277,7 @@ export const tg008: Rule = ({
       }
       continue;
     }
-    const oldShape = shape(oldLines.join('\n'), language);
+    const oldShape = shapeOf(match, beforeLines, boundBefore);
     if (same(oldShape.values, newShape.values)) continue;
     const rows = (lines: string[]) =>
       lines.map((l) => shape(l, language).values).filter((v) => v.length > 0);

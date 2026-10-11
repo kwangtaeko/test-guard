@@ -130,8 +130,8 @@ git commit -m "test: skip flaky subtraction" -m "Test-Guard-Approved: tracked in
 | TG004 | Added skip / disable / focus: `it.skip`, `xit`, `.only`, `.todo`, `test.failing`, `{ skip: true }`, `this.skip()`, `@pytest.mark.skip` (also under import aliases), `xfail`, `__test__ = False`, `@Disabled`, `@Ignore`, `Assumptions.abort()`, TestNG `enabled = false`, … — and test or assertion functions replaced in the file (`const expect = …`, `expect.extend` over a built-in matcher, a local `assertEquals`, a `Test` annotation that isn't JUnit's, `vi.mock('./sum')` in `sum.test.ts`) |
 | TG005 | Test runner config tampering: `passWithNoTests`, `testPathIgnorePatterns`, `setupFiles`/`globalSetup`, pytest `addopts` with `-k`/`--deselect`/`--ignore`, `collect_ignore`, `pytest_*` hooks in `conftest.py`, Maven `skipTests`/`testFailureIgnore`/`groups`/`includes`, Gradle `enabled = false`/`ignoreFailures`/`excludeTags`; a GitHub Actions test step given `\|\| true`, `set +e`, `continue-on-error`, `if:`, `-u` or a test filter, or a test command removed from CI, … |
 | TG006 | Getting around test-guard: changing `.test-guard.json`; removing or changing the line that runs it in hook/CI files (`\|\| true`, a narrower hook matcher, `continue-on-error`); from an agent: `git commit --no-verify`, `core.hooksPath`, git aliases/includes/`GIT_CONFIG_GLOBAL`, `Test-Guard-Approved` trailers, `TEST_GUARD_*` variables, disabling or uninstalling the plugin, and writing `.git/`, `.claude/settings.local.json` or `node_modules/test-guard` |
-| TG007 | Weaker assertions: `toBe(3)` → `toBeDefined()` / `not.toBe(…)` / `toBeGreaterThan(…)`, `assertEqual` → `assertTrue` / `assertNotEqual`, `assert x == y` → `assert x != y`, `toThrow(X)` → `toThrow()`, `pytest.raises(ValueError)` → `pytest.raises(Exception)`, and meaningless ones like `expect(true).toBe(true)` |
-| TG008 | Expected values rewritten to match the code: an assertion whose values changed (`toBe(10)` → `toBe(11)`), a changed `.snap` file or inline snapshot, while no implementation file changed. Judged at commit, in CI and when the agent stops (not per edit, so fixing a test before the code is fine); agents are also stopped from running tests with `-u` |
+| TG007 | Weaker assertions: `toBe(3)` → `toBeDefined()` / `not.toBe(…)` / `toBeGreaterThan(…)`, `assertEqual` → `assertTrue` / `assertNotEqual`, `assert x == y` → `assert x != y`, `toThrow(X)` → `toThrow()`, `pytest.raises(ValueError)` → `pytest.raises(Exception)`, and meaningless ones like `expect(true).toBe(true)` or an expected value replaced with the value under test (`toBe(3)` → `toBe(add(1, 2))` under `expect(add(1, 2))`) |
+| TG008 | Expected values rewritten to match the code: an assertion whose values changed (`toBe(10)` → `toBe(11)`, or `const expected = 10` → `11` with `toBe(expected)`), a changed `.snap` file or inline snapshot, while no implementation file changed. Judged at commit, in CI and when the agent stops (not per edit, so fixing a test before the code is fine); agents are also stopped from running tests with `-u` |
 | TG009 | A test input special-cased in the code: a new comparison such as `if (s === 'IV') return 4` where an existing test passes `'IV'` to the code under test and expects `4`, and the code never used that value before. Judged per edit, at commit, in CI and at Stop |
 
 Languages: TypeScript/JavaScript (Jest, Vitest, Mocha), Python (pytest,
@@ -325,13 +325,17 @@ node scripts/fp-history.mjs /tmp/flask --commits 300
   taken as a TestCase subclass; custom `norecursedirs` aren't read. A JS test
   function imported from a local file (`import { it } from './fake'`) isn't
   followed, since projects wrap the runner that way too (Playwright fixtures).
-- **Tests that still look intact but no longer check anything** keep their
-  counts, so they aren't detected yet: an early `return`, a test inside
-  `if (false)`, an empty `it.each([])`, or mocking the module under test.
-  These need syntax-aware analysis (planned). TG008 catches expected values
-  changed on their own, but not when real code or a dependency changed in the
-  same commit (a new source file with code counts), nor an expected value
-  moved into a variable.
+- **Tests that still look intact but no longer check anything**: an early
+  `return`, `if (false)`, an empty `it.each([])`, a swallowing `catch` and a
+  JS mock of the module under test are caught, but not every form: a table
+  held in a variable (`it.each(cases)` with `cases = []`), helpers written as
+  object or class methods, `vi.spyOn` on the module under test, Python
+  `mock.patch` or Mockito replacing the code under test, and checks that run
+  after the test ends (`setTimeout`, a Promise not awaited). TG008 catches
+  expected values changed on their own, also when moved into a variable used
+  as the expected side of `toBe(expected)` / `assertEquals(EXPECTED, …)`, but
+  not when real code or a dependency changed in the same commit (a new source
+  file with code counts).
 - **Code bent to a wrong test**: TG009 catches a test input compared in the
   code, but not logic changed to fit a wrong expectation (dropping a branch,
   skipping a recursion). In the [benchmark](bench/README.md) that was 15 of

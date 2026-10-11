@@ -1,5 +1,6 @@
 import type { Node } from 'web-tree-sitter';
 import {
+  type Check,
   type Counts,
   callee,
   caughtIn,
@@ -183,8 +184,67 @@ function count(root: Node): Counts {
   };
 }
 
+const ASSERT_EQUAL =
+  /^(?:assertEquals|assertSame|assertArrayEquals|assertIterableEquals)$/;
+
+// AssertJ calls that describe a check without changing it.
+const DESCRIBES =
+  /^(?:as|describedAs|withFailMessage|overridingErrorMessage|usingRecursiveComparison)$/;
+// Hamcrest matchers of equality: `is(x)`, `equalTo(x)`, `is(equalTo(x))`.
+const HAMCREST_EQUAL = /^(?:is|equalTo|sameInstance)$/;
+
+// `assertEquals(a, b)` (JUnit 4's message first), AssertJ
+// `assertThat(a).as("…").isEqualTo(b)`, Hamcrest `assertThat(a, is(b))`.
+function checks(root: Node): Check[] {
+  const found: Check[] = [];
+  const argsOf = (call: Node) =>
+    (call.childForFieldName('arguments')?.namedChildren ?? []).filter(
+      (a): a is Node => a !== null,
+    );
+  const nameOf = (call: Node | null) =>
+    call?.type === 'method_invocation'
+      ? (call.childForFieldName('name')?.text ?? '')
+      : '';
+  for (const call of descendants(root, ['method_invocation'])) {
+    const name = nameOf(call);
+    const args = argsOf(call);
+    if (ASSERT_EQUAL.test(name)) {
+      const [first, second] =
+        args.length === 3 && args[0]?.type === 'string_literal'
+          ? args.slice(1)
+          : args;
+      if (first && second) found.push({ node: call, sides: [first, second] });
+      continue;
+    }
+    if (name === 'assertThat' && args.length >= 2) {
+      const [subject, matcher] = args.slice(-2);
+      let expected = matcher ?? null;
+      while (expected && HAMCREST_EQUAL.test(nameOf(expected))) {
+        const inner = argsOf(expected);
+        expected = inner.length === 1 ? (inner[0] ?? null) : null;
+      }
+      if (subject && expected && expected !== matcher) {
+        found.push({ node: call, sides: [subject, expected] });
+      }
+      continue;
+    }
+    if (!/^(?:isEqualTo|isSameAs)$/.test(name) || args.length !== 1) continue;
+    let object = call.childForFieldName('object');
+    while (object && DESCRIBES.test(nameOf(object))) {
+      object = object.childForFieldName('object');
+    }
+    const [subject] =
+      nameOf(object) === 'assertThat' && object ? argsOf(object) : [];
+    if (subject && args[0]) {
+      found.push({ node: call, sides: [subject, args[0]] });
+    }
+  }
+  return found;
+}
+
 export const java: LanguageSpec = {
   strip: stripJava,
+  checks,
   // A leading `.` is allowed: `Assertions.assertEquals(`.
   assertions: /(?<![\w$])(?:assert\w*|fail)\s*\(/g,
   count,
