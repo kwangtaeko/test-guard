@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+- TG003: assertions in a method nothing calls don't count either: a method
+  of a local class or of an object bound to a name (`class Checks {
+  run() { expect(…) } }`), when the class or object isn't exported or passed
+  around as a value. Constructors and accessors still count.
+- TG006: renaming `"hooks"` in agent settings (Claude Code, Codex, Gemini
+  CLI), which turns every hook off while the lines that run test-guard stay,
+  is reported.
+- `install --agent gemini` works on `.gemini/settings.json` with comments:
+  the hooks are added as text so the comments stay; when such a file already
+  has its own `"hooks"`, it stops and prints the entries to add.
 - Claude Code hooks run by other agents: GitHub Copilot CLI's `edit` /
   `create` arguments (`path`, `old_str`, `new_str`, `file_text`) and
   Cursor's `Shell` tool are read too, so those agents' edits and commands

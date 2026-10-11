@@ -3,6 +3,7 @@ import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { afterEach, describe, expect, it } from 'vitest';
 import { main } from '../cli.js';
+import { parseJsonc } from '../rules/tg006.js';
 import { Repo } from '../testing/repo.js';
 import { runGeminiHook } from './gemini.js';
 
@@ -217,7 +218,7 @@ describe('self-protection', () => {
       { ...SETTINGS, hooksConfig: { disabled: ['test-guard-pre-tool-use'] } },
       'hooksConfig.disabled',
     ],
-    ['removing the hook', { hooks: {} }, 'removed test-guard from hook config'],
+    ['removing the hook', { hooks: {} }, "removed test-guard's hooks"],
   ])('denies %s in .gemini/settings.json', (_, after, expected) => {
     setup();
     repo.write('.gemini/settings.json', json(SETTINGS));
@@ -537,5 +538,66 @@ describe('own review', () => {
         }),
       ),
     ).toContain('hooksConfig.disabled');
+  });
+});
+
+describe('Codex adversarial review: install into settings with comments', () => {
+  async function run(args: string[]) {
+    let stdout = '';
+    let stderr = '';
+    const code = await main(args, {
+      cwd: repo.dir,
+      stdout: (t) => {
+        stdout += t;
+      },
+      stderr: (t) => {
+        stderr += t;
+      },
+      readStdin: async () => '',
+    });
+    return { code, stdout, stderr };
+  }
+  const read = () =>
+    readFileSync(join(repo.dir, '.gemini/settings.json'), 'utf8');
+
+  it.each([
+    [
+      '{\n  // my theme\n  "ui": { "theme": "Default" } /* keep */\n}\n',
+      ['// my theme', '/* keep */'],
+    ],
+    ['{\n  // nothing yet\n}\n', ['// nothing yet']],
+  ])('keeps the comments: %j', async (text, comments) => {
+    setup();
+    repo.write('.gemini/settings.json', text);
+    expect((await run(['install', '--agent', 'gemini', '-y'])).code).toBe(0);
+    const after = read();
+    for (const comment of comments) expect(after).toContain(comment);
+    const settings = parseJsonc(after) as { hooks: Record<string, unknown> };
+    expect(Object.keys(settings.hooks)).toEqual(['BeforeTool', 'AfterAgent']);
+    expect((await run(['install', '--agent', 'gemini'])).stdout).toContain(
+      'already',
+    );
+    // The guard reads the installed hooks, comments and all.
+    repo.commitAll();
+    expect(
+      denied(
+        hook('write_file', {
+          file_path: '.gemini/settings.json',
+          content: after.replace('"hooks"', '"hooks_off"'),
+        }),
+      ),
+    ).toContain('TG006');
+  });
+
+  it('stops, with the entries to add, when commented settings have hooks', async () => {
+    setup();
+    repo.write(
+      '.gemini/settings.json',
+      '{\n  // mine\n  "hooks": { "AfterAgent": [] }\n}\n',
+    );
+    const { code, stderr } = await run(['install', '--agent', 'gemini', '-y']);
+    expect(code).toBe(2);
+    expect(stderr).toContain('add these entries');
+    expect(stderr).toContain('test-guard hook gemini pre-tool-use');
   });
 });

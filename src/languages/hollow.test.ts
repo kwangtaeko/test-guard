@@ -461,3 +461,60 @@ describe('M11c red-team', () => {
     });
   });
 });
+
+// Codex adversarial review: an assertion moved into a method nothing calls.
+describe('JS methods as helpers', () => {
+  const T = "it('a', () => {\n  new Checks();\n});\n";
+  it.each([
+    [`class Checks {\n  run() { expect(f()).toBe(1); }\n}\n${T}`, 0, 1],
+    [
+      "const checks = {\n  run() { expect(f()).toBe(1); },\n};\nit('a', () => { checks.other; });",
+      0,
+      1,
+    ],
+    [
+      "const checks = {\n  run: () => { expect(f()).toBe(1); },\n};\nit('a', () => {});",
+      0,
+      1,
+    ],
+    // Called: counts.
+    [
+      "class Checks {\n  run() { expect(f()).toBe(1); }\n}\nit('a', () => { new Checks().run(); });",
+      1,
+      0,
+    ],
+    [
+      "const checks = { run() { expect(f()).toBe(1); } };\nit('a', () => { checks.run(); });",
+      1,
+      0,
+    ],
+    // Run without a call, or reachable from other code: counts.
+    [`class Checks {\n  constructor() { expect(f()).toBe(1); }\n}\n${T}`, 1, 0],
+    [
+      `class Checks {\n  get v() { expect(f()).toBe(1); return 1; }\n}\n${T}`,
+      1,
+      0,
+    ],
+    [
+      "export class Checks {\n  run() { expect(f()).toBe(1); }\n}\nit('a', () => {});",
+      1,
+      0,
+    ],
+    [
+      "class El {\n  connectedCallback() { expect(f()).toBe(1); }\n}\ncustomElements.define('x-el', El);\nit('a', () => {});",
+      1,
+      0,
+    ],
+    [
+      "test.extend({\n  fixture: async ({}, use) => { expect(f()).toBe(1); await use(1); },\n});\nit('a', () => {});",
+      1,
+      0,
+    ],
+  ])('%s', (source, assertions, unreachable) => {
+    const counts = analyze('a.test.js', source);
+    expect([counts.assertions, counts.unreachable]).toEqual([
+      assertions,
+      unreachable,
+    ]);
+  });
+});

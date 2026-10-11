@@ -4,6 +4,7 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { diffLines } from '../engine/diff.js';
+import { blankComments } from '../rules/tg006.js';
 import { InstallError, localCli } from './git-hook.js';
 
 export const AGENTS = ['claude-code', 'codex', 'gemini'] as const;
@@ -98,10 +99,12 @@ export function planAgentHooks(root: string, agent: Agent): SettingsPlan {
   const spec = SPECS[agent];
   const path = join(root, ...spec.file);
   const before = existsSync(path) ? readFileSync(path, 'utf8') : null;
-  const settings = parseSettings(path, before);
+  const { settings, comments } = parseSettings(path, before);
+  const hadHooks = isObject(settings.hooks);
   const hooks = isObject(settings.hooks) ? settings.hooks : {};
   const local = localCli(root);
 
+  let added = 0;
   for (const { event, arg, matcher } of [
     {
       event: spec.events?.preToolUse ?? 'PreToolUse',
@@ -118,10 +121,27 @@ export function planAgentHooks(root: string, agent: Agent): SettingsPlan {
       hooks: [spec.handler(arg, local)],
     });
     hooks[event] = entries;
+    added++;
   }
-  settings.hooks = hooks;
-  const after = `${JSON.stringify(settings, null, 2)}\n`;
-  return { path, before, after, changed: after !== before, note: spec.note };
+  const note = spec.note;
+  if (added === 0) return { path, before, after: before ?? '', changed: false };
+  if (!comments || before === null) {
+    settings.hooks = hooks;
+    const after = `${JSON.stringify(settings, null, 2)}\n`;
+    return { path, before, after, changed: after !== before, note };
+  }
+  // Settings with comments (Gemini CLI allows them) are edited as text, so
+  // the comments stay: the hooks go in right after the opening brace.
+  if (hadHooks) {
+    throw new InstallError(
+      `${path} has comments and its own "hooks", which test-guard won't rewrite; add these entries to "hooks" by hand:\n${JSON.stringify(hooks, null, 2)}`,
+    );
+  }
+  const open = blankComments(before).indexOf('{');
+  const empty = /^\s*\}/.test(blankComments(before).slice(open + 1));
+  const block = JSON.stringify({ hooks }, null, 2).slice(1, -1).trimEnd();
+  const after = `${before.slice(0, open + 1)}${block}${empty ? '\n' : ','}${before.slice(open + 1)}`;
+  return { path, before, after, changed: true, note };
 }
 
 export function formatDiff(before: string | null, after: string): string {
@@ -145,19 +165,28 @@ export function formatDiff(before: string | null, after: string): string {
   return `${out.join('\n').trimEnd()}\n`;
 }
 
+// Settings as JSON, or JSON with `//` and `/* */` comments (`comments`).
 function parseSettings(
   path: string,
   text: string | null,
-): Record<string, unknown> {
-  if (text === null || text.trim() === '') return {};
+): { settings: Record<string, unknown>; comments: boolean } {
+  if (text === null || text.trim() === '') {
+    return { settings: {}, comments: false };
+  }
   let value: unknown;
+  let comments = false;
   try {
     value = JSON.parse(text);
   } catch {
-    throw new InstallError(`${path} is not valid JSON`);
+    try {
+      value = JSON.parse(blankComments(text));
+      comments = true;
+    } catch {
+      throw new InstallError(`${path} is not valid JSON`);
+    }
   }
   if (!isObject(value)) throw new InstallError(`${path} is not a JSON object`);
-  return value;
+  return { settings: value, comments };
 }
 
 function isObject(value: unknown): value is Record<string, unknown[]> {

@@ -53,6 +53,10 @@ export const tg006: Rule = ({
     if (matchers.length > 0) {
       add(`changed the matcher of test-guard's hook (${matchers.join(', ')})`);
     }
+  } else if (beforeHooks && parses(afterLines)) {
+    // The settings still read, but no hook runs test-guard any more, such
+    // as `"hooks"` renamed while the lines that run it stay.
+    add("removed test-guard's hooks from the agent settings");
   } else {
     lineChanges(beforeLines.filter(mentions), afterLines.filter(mentions), add);
   }
@@ -86,14 +90,26 @@ export const tg006: Rule = ({
   return findings;
 };
 
+const parses = (lines: string[]) => {
+  try {
+    parseJsonc(lines.join('\n'));
+    return true;
+  } catch {
+    return false;
+  }
+};
+
 // JSON with `//` and `/* */` comments, which Gemini CLI settings may carry
 // (read with strip-json-comments). Throws like JSON.parse.
 export function parseJsonc(text: string): unknown {
-  return JSON.parse(
-    text.replace(
-      /("(?:\\.|[^"\\])*")|\/\/[^\n]*|\/\*[\s\S]*?\*\//g,
-      (_, str) => str ?? ' ',
-    ),
+  return JSON.parse(blankComments(text));
+}
+
+// The text with its JSON comments turned into spaces, keeping positions.
+export function blankComments(text: string): string {
+  return text.replace(
+    /("(?:\\.|[^"\\])*")|\/\/[^\n]*|\/\*[\s\S]*?\*\//g,
+    (match, str) => str ?? match.replace(/[^\n]/g, ' '),
   );
 }
 

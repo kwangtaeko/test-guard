@@ -425,11 +425,14 @@ const DECLARATIONS = [
   'method_definition',
 ];
 
-// The function a node runs in, unless it is a callback, a method, or
-// exported.
+// The function a node runs in, unless it is a callback or exported: a
+// function, or a method of a class or object bound to a name.
 function helper(node: Node): Helper | null {
   let fn = node.parent;
   while (fn && !DECLARATIONS.includes(fn.type)) fn = fn.parent;
+  if (fn?.type === 'method_definition' || fn?.parent?.type === 'pair') {
+    return method(fn);
+  }
   const named = fn?.type === 'function_declaration' ? fn : fn?.parent;
   const name = named?.childForFieldName('name');
   if (
@@ -445,6 +448,65 @@ function helper(node: Node): Helper | null {
   return statement?.parent?.type === 'export_statement'
     ? null
     : { name, local: true };
+}
+
+// A method (`check() {…}`, `check: () => {…}`) of a class declaration or of
+// an object bound to a name. Only this file calls it when the class or
+// object isn't exported and is only used through `new X(…)` or `X.member`:
+// passed anywhere as a value, other code may call its methods by name.
+// Constructors and accessors run without a call.
+function method(fn: Node): Helper | null {
+  const definition = fn.type === 'method_definition' ? fn : fn.parent;
+  const name = definition?.childForFieldName(
+    definition.type === 'pair' ? 'key' : 'name',
+  );
+  if (
+    !definition ||
+    name?.type !== 'property_identifier' ||
+    name.text === 'constructor' ||
+    definition.children.some((c) => c?.type === 'get' || c?.type === 'set')
+  ) {
+    return null;
+  }
+  const container = definition.parent; // class_body or object
+  const owner =
+    container?.type === 'class_body'
+      ? container.parent
+      : container?.type === 'object'
+        ? container.parent
+        : null;
+  if (
+    owner?.type !== 'class_declaration' &&
+    owner?.type !== 'variable_declarator'
+  ) {
+    return { name, local: false };
+  }
+  const ownerName = owner.childForFieldName('name');
+  const statement = owner.type === 'class_declaration' ? owner : owner.parent;
+  if (
+    !ownerName ||
+    !['identifier', 'type_identifier'].includes(ownerName.type) ||
+    statement?.parent?.type === 'export_statement'
+  ) {
+    return { name, local: false };
+  }
+  const usedAsValue = descendants(owner.tree.rootNode, [
+    'identifier',
+    'type_identifier',
+  ]).some(
+    (use) =>
+      use.text === ownerName.text &&
+      use.id !== ownerName.id &&
+      !(
+        use.parent?.type === 'new_expression' &&
+        use.parent.childForFieldName('constructor')?.id === use.id
+      ) &&
+      !(
+        use.parent?.type === 'member_expression' &&
+        use.parent.childForFieldName('object')?.id === use.id
+      ),
+  );
+  return { name, local: !usedAsValue };
 }
 
 // `const SKIP = true`, and every other binding of a name, which keeps it

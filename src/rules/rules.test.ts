@@ -2095,3 +2095,57 @@ describe('M11d: false positives found in real history (zod d24fb4c)', () => {
     ).toEqual([]);
   });
 });
+
+describe('Codex adversarial review', () => {
+  it('TG003 when an assertion moves into a local class method nothing calls', () => {
+    expect(
+      check({
+        before: file(
+          'a.test.js',
+          "it('adds', () => {",
+          '  expect(add(1, 2)).toBe(3);',
+          '});',
+        ),
+        after: file(
+          'a.test.js',
+          'class Checks {',
+          '  adds() { expect(add(1, 2)).toBe(3); }',
+          '}',
+          "it('adds', () => {",
+          '  new Checks();',
+          '});',
+        ),
+      }).map((f) => [f.ruleId, f.message]),
+    ).toEqual([['TG003', 'assertions 1 → 0 (1 in code that never runs)']]);
+  });
+});
+
+describe('TG006: agent hooks turned off by renaming "hooks"', () => {
+  it.each([
+    '.claude/settings.json',
+    '.codex/hooks.json',
+    '.gemini/settings.json',
+  ])('%s', (path) => {
+    const settings = {
+      hooks: {
+        Stop: [
+          {
+            hooks: [
+              {
+                type: 'command',
+                command: 'npx --no-install test-guard hook x stop',
+              },
+            ],
+          },
+        ],
+      },
+    };
+    const text = JSON.stringify(settings, null, 2);
+    expect(
+      check({
+        before: file(path, text),
+        after: file(path, text.replace('"hooks": {', '"hooks_off": {')),
+      }).map((f) => f.message),
+    ).toEqual(["removed test-guard's hooks from the agent settings"]);
+  });
+});

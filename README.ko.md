@@ -338,8 +338,8 @@ node scripts/fp-history.mjs /tmp/flask --commits 300
   때문입니다(Playwright 픽스처).
 - **겉모양은 그대로인데 실제로는 아무것도 검사하지 않는 테스트**: 앞부분의 `return`,
   `if (false)`, 빈 `it.each([])`, 실패를 삼키는 `catch`, 테스트 대상 모듈의 JS mock은 잡지만 모든
-  형태를 잡지는 못합니다: 변수에 담은 표(`cases = []`인 `it.each(cases)`), 객체·클래스 메서드로
-  만든 헬퍼, 테스트 대상 모듈에 건 `vi.spyOn`, Python `mock.patch`나 Mockito로 테스트 대상 바꾸기,
+  형태를 잡지는 못합니다: 변수에 담은 표(`cases = []`인 `it.each(cases)`), 테스트
+  대상 모듈에 건 `vi.spyOn`, Python `mock.patch`나 Mockito로 테스트 대상 바꾸기,
   테스트가 끝난 뒤 실행되는 검사(`setTimeout`, await하지 않은 Promise). 기대값만 바꾼 경우는
   TG008이 잡고, `toBe(expected)`·`assertEquals(EXPECTED, …)`처럼 기대값 쪽에 쓰인 변수로 옮겨
   바꾼 경우도 잡지만, 같은 커밋에서 실제 코드나 의존성이 바뀌었으면(코드가 든 새 소스 파일 포함)

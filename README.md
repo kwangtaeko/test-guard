@@ -358,9 +358,9 @@ node scripts/fp-history.mjs /tmp/flask --commits 300
 - **Tests that still look intact but no longer check anything**: an early
   `return`, `if (false)`, an empty `it.each([])`, a swallowing `catch` and a
   JS mock of the module under test are caught, but not every form: a table
-  held in a variable (`it.each(cases)` with `cases = []`), helpers written as
-  object or class methods, `vi.spyOn` on the module under test, Python
-  `mock.patch` or Mockito replacing the code under test, and checks that run
+  held in a variable (`it.each(cases)` with `cases = []`), `vi.spyOn` on the
+  module under test, Python `mock.patch` or Mockito replacing the code under
+  test, and checks that run
   after the test ends (`setTimeout`, a Promise not awaited). TG008 catches
   expected values changed on their own, also when moved into a variable used
   as the expected side of `toBe(expected)` / `assertEquals(EXPECTED, …)`, but
