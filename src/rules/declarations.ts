@@ -13,6 +13,7 @@ export interface Declaration {
   start: number; // lines, 1-based
   end: number;
   scopeEnd: number; // last line where the name is visible
+  mutated: boolean; // assigned again in its block: the value isn't fixed
   value: string; // source text after `=`, without a trailing `;`
 }
 
@@ -51,11 +52,13 @@ export function declarations(
     const name = DECLARATION[language].exec(line)?.[1];
     if (!name || (language === 'python' && at > 0)) continue;
     const last = statementEnd(stripped, i);
+    const end = scopeEnd(stripped, i, language);
     found.push({
       name,
       start: i + 1,
       end: last + 1,
-      scopeEnd: scopeEnd(stripped, i, language) + 1,
+      scopeEnd: end + 1,
+      mutated: assigns(name).test(stripped.slice(last + 1, end + 1).join('\n')),
       value: source
         .slice(i, last + 1)
         .join('\n')
@@ -90,15 +93,24 @@ function scopeEnd(stripped: string[], i: number, language: Language): number {
   return stripped.length - 1;
 }
 
+// An assignment to `name`: `name = …`, `name += …`, `name++`, `--name`.
+function assigns(name: string): RegExp {
+  const n = name.replace(/\$/g, '\\$');
+  return new RegExp(
+    `(?<![\\w$.])${n}\\s*(?:[-+*/%&|^]|\\*\\*|<<|>>>?|\\?\\?|&&|\\|\\|)?=(?![=>])|(?:\\+\\+|--)\\s*${n}(?![\\w$])|(?<![\\w$.])${n}\\s*(?:\\+\\+|--)`,
+  );
+}
+
 // The value a name has at a line: its nearest declaration above whose block
 // reaches the line, or its only one if visible there (a Python module
-// constant defined below the tests).
+// constant defined below the tests); none when the name is assigned again.
 export function valueAt(
   list: Declaration[],
 ): (name: string, line: number) => string | undefined {
   return (name, line) => {
     const visible = list.filter((d) => d.name === name && line <= d.scopeEnd);
     const above = visible.filter((d) => d.end < line).at(-1);
-    return (above ?? (visible.length === 1 ? visible[0] : undefined))?.value;
+    const found = above ?? (visible.length === 1 ? visible[0] : undefined);
+    return found?.mutated ? undefined : found?.value;
   };
 }

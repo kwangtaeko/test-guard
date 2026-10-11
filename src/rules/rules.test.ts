@@ -2075,3 +2075,23 @@ describe('M11d: own review', () => {
     ]);
   });
 });
+
+describe('M11d: false positives found in real history (zod d24fb4c)', () => {
+  it("doesn't read a variable that changes as the value it was declared with", () => {
+    const before = [
+      "test('reads', () => {",
+      '  let reads = 0;',
+      '  const input = { get x() { reads++; return 1; } };',
+      '  parse(input);',
+      '  expect(reads).toBe(1);',
+      '});',
+    ];
+    const after = before.map((l) => l.replace('toBe(1)', 'toBe(0)'));
+    expect(
+      check({
+        before: file('a.test.js', ...before),
+        after: file('a.test.js', ...after),
+      }).filter((f) => f.message.startsWith('replaced')),
+    ).toEqual([]);
+  });
+});
