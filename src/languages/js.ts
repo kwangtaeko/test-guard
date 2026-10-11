@@ -512,8 +512,10 @@ const EQUALS = /^(?:toBe|toEqual|toStrictEqual|equal|equals|eql)$/;
 const ASSERT_EQUALS =
   /^assert\.(?:equal|strictEqual|deepEqual|deepStrictEqual)$/;
 
-// `expect(a).toBe(b)`, chai `expect(a).to.deep.equal(b)` (without `.not`),
-// `assert.equal(a, b)`.
+// Checks of a value: equality (`expect(a).toBe(b)`, chai
+// `expect(a).to.deep.equal(b)`, `assert.equal(a, b)`), and any other
+// matcher or `assert.*` with arguments (`expect(a).toHaveLength(n)`,
+// `.not.toBe(b)`), one per argument.
 function checks(root: Node): Check[] {
   const found: Check[] = [];
   for (const call of descendants(root, ['call_expression'])) {
@@ -522,23 +524,18 @@ function checks(root: Node): Check[] {
       call.childForFieldName('arguments')?.namedChildren ?? []
     ).filter((a): a is Node => a !== null);
     const [first, second] = args;
-    if (ASSERT_EQUALS.test(callee(fn)) && first && second) {
-      found.push({ node: call, sides: [first, second] });
+    if (/^assert\.\w+$/.test(callee(fn))) {
+      if (first && second) {
+        const equal = ASSERT_EQUALS.test(callee(fn));
+        found.push({ node: call, sides: [first, second], equal });
+      }
       continue;
     }
-    if (
-      fn?.type !== 'member_expression' ||
-      !EQUALS.test(fn.childForFieldName('property')?.text ?? '') ||
-      !first ||
-      second
-    ) {
-      continue;
-    }
+    if (fn?.type !== 'member_expression' || !first) continue;
     let object = fn.childForFieldName('object');
-    while (
-      object?.type === 'member_expression' &&
-      object.childForFieldName('property')?.text !== 'not'
-    ) {
+    let negated = false;
+    while (object?.type === 'member_expression') {
+      if (object.childForFieldName('property')?.text === 'not') negated = true;
       object = object.childForFieldName('object');
     }
     const subject =
@@ -546,7 +543,14 @@ function checks(root: Node): Check[] {
       /^expect(?:\.soft)?$/.test(callee(object.childForFieldName('function')))
         ? object.childForFieldName('arguments')?.namedChildren[0]
         : null;
-    if (subject) found.push({ node: call, sides: [subject, first] });
+    if (!subject) continue;
+    const equal =
+      EQUALS.test(fn.childForFieldName('property')?.text ?? '') &&
+      !second &&
+      !negated;
+    for (const arg of args) {
+      found.push({ node: call, sides: [subject, arg], equal });
+    }
   }
   return found;
 }

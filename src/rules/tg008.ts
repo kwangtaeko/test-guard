@@ -1,4 +1,4 @@
-import { type EqualityCheck, isAssertionLine } from '../languages/index.js';
+import { isAssertionLine, type ValueCheck } from '../languages/index.js';
 import type { Language } from '../types.js';
 import { isSnapshot } from '../watched.js';
 import {
@@ -68,22 +68,26 @@ function statements(
   return found;
 }
 
-// Code rather than a value: a call, a function.
+// Code rather than a value: a call, a function. Constructors of plain
+// values (`List.of(1, 2)`, `new Set([1])`, `Decimal("1.5")`) are values.
 const CALL = /[\w$\]>)]\s*\(|=>|\bfunction\b|\blambda\b/;
+const VALUE_OF =
+  /(?:\bnew\s*(?:Set|Map|Date|BigDecimal|BigInteger)|\b(?:List|Set|Map)\.of(?:Entries)?|\bArrays\.asList|(?<![\w$.])(?:datetime\.)?(?:datetime|date|time|timedelta|Decimal|Fraction|dict|list|set|tuple|frozenset))\s*\(/g;
+const isCode = (text: string) => CALL.test(text.replace(VALUE_OF, '('));
 
 // A declaration whose value has no code in it, judged on stripped lines.
 const literal = (stripped: string[], d: Declaration) =>
-  !CALL.test(
+  !isCode(
     stripped
       .slice(d.start - 1, d.end)
       .join('\n')
       .replace(/^[^=]*=/, ''),
   );
 
-// Names on the expected side of equality checks: a side with no call, and
-// not on the other side. A name passed to the code under test is an input
+// Names on the expected side of checks: a side with no call, and not on the
+// other side. A name passed to the code under test is an input
 // (`expect(f(x)).toBe(2)`), left alone.
-function expectedNames(checks: EqualityCheck[]): Set<string> {
+function expectedNames(checks: ValueCheck[]): Set<string> {
   const names = (side: string) =>
     new Set(
       side
@@ -93,7 +97,7 @@ function expectedNames(checks: EqualityCheck[]): Set<string> {
   const found = new Set<string>();
   for (const { sides } of checks) {
     sides.forEach((side, i) => {
-      if (CALL.test(side)) return;
+      if (isCode(side)) return;
       const other = names(sides[1 - i] ?? '');
       for (const name of names(side)) if (!other.has(name)) found.add(name);
     });

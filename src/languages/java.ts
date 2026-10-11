@@ -186,15 +186,25 @@ function count(root: Node): Counts {
 
 const ASSERT_EQUAL =
   /^(?:assertEquals|assertSame|assertArrayEquals|assertIterableEquals)$/;
+// JUnit assertions that compare two values (not `assertThrows(X.class, …)`
+// and the like).
+const VALUE_ASSERT =
+  /^assert(?:Not)?(?:Equals|Same|ArrayEquals|IterableEquals|LinesMatch|InstanceOf)$/;
 
 // AssertJ calls that describe a check without changing it.
 const DESCRIBES =
   /^(?:as|describedAs|withFailMessage|overridingErrorMessage|usingRecursiveComparison)$/;
 // Hamcrest matchers of equality: `is(x)`, `equalTo(x)`, `is(equalTo(x))`.
 const HAMCREST_EQUAL = /^(?:is|equalTo|sameInstance)$/;
+// Hamcrest matchers taking the expected value as their one argument.
+const HAMCREST =
+  /^(?:is|equalTo|sameInstance|not|hasSize|hasLength|hasItem|hasItems|hasKey|hasValue|hasToString|contains|containsInAnyOrder|containsString|startsWith|endsWith|greaterThan(?:OrEqualTo)?|lessThan(?:OrEqualTo)?|closeTo|everyItem|arrayContaining|arrayWithSize|iterableWithSize)$/;
 
-// `assertEquals(a, b)` (JUnit 4's message first), AssertJ
-// `assertThat(a).as("…").isEqualTo(b)`, Hamcrest `assertThat(a, is(b))`.
+// JUnit `assertEquals(a, b)` (JUnit 4's message first), AssertJ
+// `assertThat(a).as("…").isEqualTo(b)`, Hamcrest `assertThat(a, is(b))`
+// (equality), and other value assertions (`assertNotEquals(a, b)`,
+// `assertThat(a).hasSize(n)`, `assertThat(a, hasSize(n))`), one per
+// argument.
 function checks(root: Node): Check[] {
   const found: Check[] = [];
   const argsOf = (call: Node) =>
@@ -208,35 +218,49 @@ function checks(root: Node): Check[] {
   for (const call of descendants(root, ['method_invocation'])) {
     const name = nameOf(call);
     const args = argsOf(call);
-    if (ASSERT_EQUAL.test(name)) {
+    if (VALUE_ASSERT.test(name)) {
       const [first, second] =
         args.length === 3 && args[0]?.type === 'string_literal'
           ? args.slice(1)
           : args;
-      if (first && second) found.push({ node: call, sides: [first, second] });
+      if (first && second) {
+        const equal = ASSERT_EQUAL.test(name);
+        found.push({ node: call, sides: [first, second], equal });
+      }
       continue;
     }
     if (name === 'assertThat' && args.length >= 2) {
       const [subject, matcher] = args.slice(-2);
+      // Matchers taking one argument, unwrapped: `is(equalTo(x))` → `x`.
       let expected = matcher ?? null;
-      while (expected && HAMCREST_EQUAL.test(nameOf(expected))) {
-        const inner = argsOf(expected);
-        expected = inner.length === 1 ? (inner[0] ?? null) : null;
+      let equal = true;
+      while (
+        expected &&
+        argsOf(expected).length === 1 &&
+        HAMCREST.test(nameOf(expected))
+      ) {
+        equal &&= HAMCREST_EQUAL.test(nameOf(expected));
+        expected = argsOf(expected)[0] ?? null;
       }
       if (subject && expected && expected !== matcher) {
-        found.push({ node: call, sides: [subject, expected] });
+        found.push({ node: call, sides: [subject, expected], equal });
       }
       continue;
     }
-    if (!/^(?:isEqualTo|isSameAs)$/.test(name) || args.length !== 1) continue;
+    if (args.length === 0) continue;
+    // An AssertJ chain down to `assertThat(…)`.
     let object = call.childForFieldName('object');
-    while (object && DESCRIBES.test(nameOf(object))) {
+    let described = true;
+    while (object && nameOf(object) && nameOf(object) !== 'assertThat') {
+      described &&= DESCRIBES.test(nameOf(object));
       object = object.childForFieldName('object');
     }
-    const [subject] =
-      nameOf(object) === 'assertThat' && object ? argsOf(object) : [];
-    if (subject && args[0]) {
-      found.push({ node: call, sides: [subject, args[0]] });
+    const [subject] = object && nameOf(object) ? argsOf(object) : [];
+    if (!subject) continue;
+    const equal =
+      /^(?:isEqualTo|isSameAs)$/.test(name) && args.length === 1 && described;
+    for (const arg of args) {
+      found.push({ node: call, sides: [subject, arg], equal });
     }
   }
   return found;

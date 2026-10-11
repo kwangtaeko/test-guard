@@ -281,7 +281,9 @@ function count(root: Node): Counts {
 const ASSERT_EQUAL =
   /^self\.assert(?:Equals?|Is|ListEqual|DictEqual|TupleEqual|SetEqual|SequenceEqual|CountEqual|MultiLineEqual)$/;
 
-// `assert a == b`, `assert a is b`, `self.assertEqual(a, b)`.
+// `assert a == b`, `assert a is b`, `self.assertEqual(a, b)` (equality),
+// and other comparisons and two-argument assertions (`assert n < LIMIT`,
+// `self.assertIn(x, ITEMS)`).
 function checks(root: Node): Check[] {
   const found: Check[] = [];
   for (const node of descendants(root, ['assert_statement'])) {
@@ -292,24 +294,22 @@ function checks(root: Node): Check[] {
     if (test?.type !== 'comparison_operator') continue;
     const [left, right, extra] = test.namedChildren;
     const operators = test.children.filter((c) => c && !c.isNamed);
-    if (
-      left &&
-      right &&
-      !extra &&
-      operators.length === 1 &&
-      /^(?:==|is)$/.test(operators[0]?.text ?? '')
-    ) {
-      found.push({ node, sides: [left, right] });
+    if (left && right && !extra) {
+      const equal =
+        operators.length === 1 && /^(?:==|is)$/.test(operators[0]?.text ?? '');
+      found.push({ node, sides: [left, right], equal });
     }
   }
   for (const call of descendants(root, ['call'])) {
-    if (!ASSERT_EQUAL.test(callee(call.childForFieldName('function')))) {
-      continue;
-    }
+    const name = callee(call.childForFieldName('function'));
+    if (!/^self\.assert\w*$/.test(name)) continue;
     const [first, second] = (
       call.childForFieldName('arguments')?.namedChildren ?? []
     ).filter((a): a is Node => a !== null && a.type !== 'keyword_argument');
-    if (first && second) found.push({ node: call, sides: [first, second] });
+    if (first && second) {
+      const equal = ASSERT_EQUAL.test(name);
+      found.push({ node: call, sides: [first, second], equal });
+    }
   }
   return found;
 }

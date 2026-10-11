@@ -1,4 +1,4 @@
-import type { Analysis, EqualityCheck } from '../languages/index.js';
+import type { Analysis, ValueCheck } from '../languages/index.js';
 import type { Language } from '../types.js';
 import { declarations, valueAt } from './declarations.js';
 import type { Rule, RuleFinding } from './types.js';
@@ -214,18 +214,20 @@ export const tg007: Rule = ({
         /^[A-Za-z_$][\w$]*$/.test(side)
           ? (value(side, line)?.replace(/\s+/g, '') ?? side)
           : side;
-      return analysis.checks.map(
-        (c): EqualityCheck => ({
-          ...c,
-          sides: [resolve(c.sides[0], c.start), resolve(c.sides[1], c.start)],
-        }),
-      );
+      return analysis.checks
+        .filter((c) => c.equal)
+        .map(
+          (c): ValueCheck => ({
+            ...c,
+            sides: [resolve(c.sides[0], c.start), resolve(c.sides[1], c.start)],
+          }),
+        );
     };
     const checksAfter = resolved(after, afterLines);
     const kept = new Set(checksAfter.map((c) => c.sides.join('\n')));
     const deleted = new Set(hunks.flatMap((hunk) => hunk.deleted));
     const added = new Set(hunks.flatMap((hunk) => hunk.added));
-    const lines = (check: EqualityCheck, set: Set<number>) => {
+    const lines = (check: ValueCheck, set: Set<number>) => {
       const found: number[] = [];
       for (let n = check.start; n <= check.end; n++) {
         if (set.has(n)) found.push(n);

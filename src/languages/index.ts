@@ -12,7 +12,7 @@ export interface LanguageSpec {
   // Tests and assertions, and those that can't fail the test, on the
   // stripped code's tree.
   count(root: Node): Counts;
-  // Equality checks, on the stripped code's tree (TG007).
+  // Checks of values, on the stripped code's tree (TG007, TG008).
   checks(root: Node): Check[];
   // Skips found on the tree of the original source, where the patterns
   // fall short (string values, imports, variables).
@@ -35,13 +35,14 @@ export interface Analysis {
   swallowed: number; // assertions left out of stats because failures are caught
   unreachable: number; // assertions left out of stats because they never run
   deadTests: number; // tests left out of stats because they never run
-  checks: EqualityCheck[];
+  checks: ValueCheck[];
 }
 
-export interface EqualityCheck {
+export interface ValueCheck {
   start: number; // lines, 1-based
   end: number;
   sides: [string, string]; // source text without whitespace
+  equal: boolean; // the sides must be equal
 }
 
 const SPECS: Record<Language, LanguageSpec> = { js, python, java };
@@ -67,7 +68,7 @@ export function analyzeSource(
     typeof spec.skips === 'function' ? spec.skips(code) : spec.skips;
   const tree = parse(language, code);
   let counts: Counts;
-  let checks: EqualityCheck[] = [];
+  let checks: ValueCheck[] = [];
   try {
     counts = spec.count(tree.rootNode);
     // Compared on the source, where strings aren't blanked; skipped when
@@ -78,10 +79,11 @@ export function analyzeSource(
           .slice(n.startIndex, n.endIndex)
           .replace(/\s+/g, '')
           .replace(/,(?=[)\]}])/g, '');
-      checks = spec.checks(tree.rootNode).map(({ node, sides }) => ({
+      checks = spec.checks(tree.rootNode).map(({ node, sides, equal }) => ({
         start: node.startPosition.row + 1,
         end: node.endPosition.row + 1,
         sides: [text(sides[0]), text(sides[1])],
+        equal,
       }));
     }
   } finally {

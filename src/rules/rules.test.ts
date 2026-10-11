@@ -1915,3 +1915,98 @@ describe('M11d, red-team re-check', () => {
     expect(tg008('test/a.test.js', from, to)).toEqual([]);
   });
 });
+
+describe('M11d: expected values for any matcher, value constructors', () => {
+  const tg008 = (path: string, from: string[], to: string[]) =>
+    compareFiles(
+      { before: file(path, ...from), after: file(path, ...to) },
+      { ...ctx, implementationChanged: false },
+      ['TG008'],
+    ).map(({ message }) => message);
+  const bump = (lines: string[], i: number) =>
+    lines.map((l, k) =>
+      k === i ? l.replace(/\d+(?=\D*$)/, (n) => String(Number(n) + 1)) : l,
+    );
+
+  it.each([
+    [
+      'test/a.test.js',
+      [
+        "test('a', () => {",
+        '  const count = 3;',
+        '  expect(split("a,b,c")).toHaveLength(count);',
+        '});',
+      ],
+      1,
+    ],
+    [
+      'test/a.test.js',
+      [
+        "test('a', () => {",
+        '  const args = [1, 2];',
+        '  expect(fn).toHaveBeenCalledWith(args);',
+        '});',
+      ],
+      1,
+    ],
+    [
+      'tests/test_a.py',
+      ['LIMIT = 10', 'def test_a():', '    assert len(build()) < LIMIT'],
+      0,
+    ],
+    [
+      'src/test/java/ATest.java',
+      [
+        'class ATest {',
+        '  static final List<Integer> EXPECTED = List.of(1, 2, 3);',
+        '  @Test void a() { assertEquals(EXPECTED, sorted(input)); }',
+        '}',
+      ],
+      1,
+    ],
+    [
+      'src/test/java/ATest.java',
+      [
+        'class ATest {',
+        '  static final int SIZE = 3;',
+        '  @Test void a() { assertThat(items()).hasSize(SIZE); }',
+        '}',
+      ],
+      1,
+    ],
+    [
+      'src/test/java/ATest.java',
+      [
+        'class ATest {',
+        '  static final int SIZE = 3;',
+        '  @Test void a() { assertThat(items(), hasSize(SIZE)); }',
+        '}',
+      ],
+      1,
+    ],
+  ])('TG008 %s: a changed value used by a check', (path, lines, line) => {
+    expect(tg008(path, lines, bump(lines, line))).toHaveLength(1);
+  });
+
+  it('leaves an input passed to the code alone, whatever the matcher', () => {
+    const lines = [
+      "test('a', () => {",
+      '  const n = 3;',
+      '  expect(range(n)).toHaveLength(3);',
+      '});',
+    ];
+    expect(tg008('test/a.test.js', lines, bump(lines, 1))).toEqual([]);
+  });
+
+  it('TG007 still compares only equality checks', () => {
+    expect(
+      check({
+        before: file('a.test.js', 'it("x", () => { expect(r).toBe(1); });'),
+        after: file(
+          'a.test.js',
+          'it("x", () => { expect(r).toBe(1); expect(r).not.toBe(r); });',
+        ),
+      }).filter((f) => f.message.startsWith('replaced')),
+    ).toEqual([]);
+  });
+});

@@ -33,8 +33,10 @@
 - TG008: an expected value moved into a variable and changed there
   (`const expected = 10` → `11` with `toBe(expected)`, a Python module
   constant, a Java `static final` field), or moved and changed in one step
-  (`toBe(10)` → `const expected = 11; …toBe(expected)`). Only names on the
-  expected side of an equality check count; a value passed to the code under
+  (`toBe(10)` → `const expected = 11; …toBe(expected)`). Any matcher counts
+  (`toHaveLength(count)`, `assertThat(x).hasSize(SIZE)`, `assert n < LIMIT`),
+  and values built by plain constructors (`List.of(1, 2)`, `new Set([1])`,
+  `Decimal("1.5")`). Only names on the expected side of a check count; a value passed to the code under
   test (`expect(f(x))`) is an input and left alone. A trailing comma added
   by a formatter is no longer read as a changed value.
 - TG002/TG003: tests and assertions that can never fail don't count, so

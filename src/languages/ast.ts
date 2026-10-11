@@ -13,11 +13,13 @@ export interface Counts {
   deadTests: number; // tests left out of `tests`
 }
 
-// An equality check (`expect(a).toBe(b)`, `assert a == b`): the value under
-// test and the value it must equal, in either order.
+// A check of a value (`expect(a).toBe(b)`, `assert a == b`,
+// `expect(a).toHaveLength(n)`): the value under test and the value it is
+// checked against, in either order; `equal` when they must be equal.
 export interface Check {
   node: Node;
   sides: [Node, Node];
+  equal: boolean;
 }
 
 // A handler body fails the test: it rethrows, fails, or checks the error
