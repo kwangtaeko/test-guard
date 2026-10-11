@@ -26,6 +26,16 @@
 | 사용자 알림 | 공통 JSON 필드 `systemMessage` | hooks.md "JSON output" |
 | exit 0 + 일반 텍스트 | PreToolUse/Stop에서는 디버그 로그로만 감 | hooks.md "Exit code 0" |
 
+## 이 훅을 실행하는 다른 에이전트 (2026-10-11 조사)
+GitHub Copilot CLI와 Cursor도 `.claude/settings.json`의 훅을 실행합니다. 둘 다 실제 세션에서는 아직 확인하지 않았습니다.
+
+| 에이전트 | 확인한 것 | 출처 | test-guard 대응 |
+|---|---|---|---|
+| Copilot CLI | Claude 형식 훅에 Claude 도구 이름(`Bash`, `Edit` 등)을 넘김. 1.0.30 번들에서는 `tool_input`이 Copilot 자체 인자(`edit { path, old_str, new_str }`, `create { path, file_text }`)를 JSON으로 푼 것 | Copilot CLI changelog("Claude-format hook payloads carry the Claude tool name"), `@github/copilot@1.0.30` `app.js` | Claude 키가 없으면 `path`·`old_str`·`new_str`·`file_text`도 읽음 |
+| Cursor | Claude 설정의 훅을 기본으로 불러오고, matcher에서는 `Bash`→`Shell`, `Edit`→`Write`로 대응시킴. 셸 도구 입력은 `{ command, working_directory }` | cursor.com/docs/reference/third-party-hooks, cursor.com/docs/agent/hooks | `Shell`도 셸 명령으로 읽음. `Write`의 `content`가 파일 전체인지 문서에 없어, 일부만 담겼을 때 삭제로 오판하지 않도록 Cursor 형식 편집은 아직 읽지 않음 |
+
+인자 형태를 모르는 편집은 통과하므로 Stop 훅, commit-msg 훅과 CI가 최종 관문입니다.
+
 ## 플러그인 끄기 차단 (레드팀 2차, TG006)
 - 출처: `claude plugin --help`, `claude plugin disable --help`, `claude plugin uninstall --help` (Claude Code 2.1.289, 2026-10-05 확인)
 - `claude plugin|plugins disable [options] [plugin]` (`-a, --all`로 전부), `claude plugin uninstall|remove [options] <plugin>`

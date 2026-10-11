@@ -326,3 +326,35 @@ describe('cli', () => {
     });
   });
 });
+
+// Copilot CLI and Cursor run Claude Code hooks with Claude tool names, but
+// possibly their own arguments (docs/agents/claude-code.md).
+describe('Claude Code hooks run by other agents', () => {
+  it('reads Copilot CLI edit and create arguments', () => {
+    setup();
+    expect(
+      denied(
+        pre('Edit', {
+          path: join(repo.dir, 'a.test.js'),
+          old_str: '.toBe(3)',
+          new_str: '.toBeDefined()',
+        }),
+      ),
+    ).toContain('TG007');
+    expect(
+      denied(
+        pre('Write', {
+          path: join(repo.dir, 'b.test.js'),
+          file_text: "it.only('b', () => {});\n",
+        }),
+      ),
+    ).toContain('TG004');
+  });
+
+  it("reads Cursor's Shell tool", () => {
+    setup();
+    expect(denied(pre('Shell', { command: 'rm a.test.js' }))).toContain(
+      'TG001',
+    );
+  });
+});

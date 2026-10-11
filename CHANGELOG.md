@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Claude Code hooks run by other agents: GitHub Copilot CLI's `edit` /
+  `create` arguments (`path`, `old_str`, `new_str`, `file_text`) and
+  Cursor's `Shell` tool are read too, so those agents' edits and commands
+  aren't let through unseen (not yet tried in a live session).
 - Probity: `import { testGuard } from 'test-guard/probity'` is a
   [Probity](https://github.com/nizos/probity) rule that runs test-guard's
   edit and shell checks in Probity's process, for Claude Code, Codex and
