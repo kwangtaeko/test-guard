@@ -1,0 +1,44 @@
+name: Release
+
+# Publishes to npm when a version tag is pushed, with npm trusted publishing
+# (OIDC, no token; provenance is added automatically). The package is the
+# tag's committed dist/, the same files the GitHub Action runs, so it is not
+# built again here. Setup on npmjs.com: package settings → Trusted publisher
+# → GitHub Actions: user `kwangtaeko`, repository `test-guard`, workflow
+# `release.yml`.
+
+on:
+  push:
+    tags: ['v[0-9]+.[0-9]+.[0-9]+'] # not the moving `v0` tag
+
+permissions:
+  id-token: write # trusted publishing
+  contents: read
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          # Trusted publishing needs npm 11.5.1 or later (Node 24 ships it).
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+      - run: npm --version
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm typecheck
+      - run: pnpm lint
+      - run: pnpm test
+      # The tag is on the commit that adds dist/; the version must match it.
+      - run: node scripts/check-release.mjs
+      - name: Check the committed dist
+        run: |
+          for f in cli.js probity.js probity.d.ts web-tree-sitter.wasm \
+            tree-sitter-tsx.wasm tree-sitter-python.wasm tree-sitter-java.wasm; do
+            test -s "dist/$f" || { echo "missing dist/$f"; exit 1; }
+          done
+          test "$(node dist/cli.js --version)" = "${GITHUB_REF_NAME#v}" \
+            || { echo "dist/cli.js is not $GITHUB_REF_NAME"; exit 1; }
+      - run: npm publish --ignore-scripts
