@@ -2059,3 +2059,19 @@ describe('M11d: false positives found in real history (gson 2bcaaed)', () => {
     expect(tg008(PATH, before, after)).toEqual([]);
   });
 });
+
+describe('M11d: own review', () => {
+  it('compares subjects in a Java file with unicode escapes', () => {
+    const path = 'src/test/java/ATest.java';
+    const body = (expected: string) =>
+      `class ATest { @Test void a() { String s = "caf\\u00e9"; assertEquals(${expected}, roman("IV")); } }`;
+    expect(
+      check({
+        before: file(path, body('4')),
+        after: file(path, body('roman("IV")')),
+      }).map((f) => f.message),
+    ).toEqual([
+      'replaced the expected value with the value under test `roman("IV")`',
+    ]);
+  });
+});

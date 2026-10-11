@@ -499,3 +499,43 @@ describe('red-team re-check', () => {
     ).toContain('TG006');
   });
 });
+
+describe('own review', () => {
+  it("denies disabling test-guard's hook under a name the user chose", () => {
+    setup();
+    const settings = (disabled: string[]) =>
+      `${JSON.stringify(
+        {
+          hooks: {
+            BeforeTool: [
+              {
+                matcher: 'write_file|replace|run_shell_command',
+                hooks: [
+                  {
+                    name: 'guard',
+                    type: 'command',
+                    command:
+                      'npx --no-install test-guard hook gemini pre-tool-use',
+                  },
+                ],
+              },
+            ],
+          },
+          hooksConfig: { disabled },
+        },
+        null,
+        2,
+      )}
+`;
+    repo.write('.gemini/settings.json', settings([]));
+    repo.commitAll();
+    expect(
+      denied(
+        hook('write_file', {
+          file_path: '.gemini/settings.json',
+          content: settings(['guard']),
+        }),
+      ),
+    ).toContain('hooksConfig.disabled');
+  });
+});

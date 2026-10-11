@@ -100,23 +100,44 @@ export function parseJsonc(text: string): unknown {
 // Gemini CLI settings that turn hooks off: `hooksConfig.enabled: false`, or
 // test-guard's hook named in `hooksConfig.disabled`.
 export function hooksTurnedOff(before: string, after: string): string | null {
-  const config = (text: string) => {
+  const settings = (text: string): Record<string, unknown> => {
     try {
       const value = parseJsonc(text);
-      return isObject(value) && isObject(value.hooksConfig)
-        ? (value.hooksConfig as Record<string, unknown>)
-        : {};
+      return isObject(value) ? value : {};
     } catch {
       return {};
     }
   };
-  const [was, now] = [config(before), config(after)];
+  const [old, current] = [settings(before), settings(after)];
+  const config = (s: Record<string, unknown>) =>
+    isObject(s.hooksConfig) ? (s.hooksConfig as Record<string, unknown>) : {};
+  const [was, now] = [config(old), config(current)];
   if (now.enabled === false && was.enabled !== false) {
     return 'turned off Gemini CLI hooks (`hooksConfig.enabled: false`), which stops test-guard';
   }
+  // test-guard's hooks by the names they have, whatever the user chose.
+  const ours = new Set<string>();
+  for (const s of [old, current]) {
+    for (const entries of Object.values(isObject(s.hooks) ? s.hooks : {})) {
+      for (const entry of Array.isArray(entries) ? entries : []) {
+        for (const hook of isObject(entry) && Array.isArray(entry.hooks)
+          ? entry.hooks
+          : []) {
+          if (!isObject(hook) || !JSON.stringify(hook).includes('test-guard')) {
+            continue;
+          }
+          for (const id of [hook.name, hook.command]) {
+            if (typeof id === 'string') ours.add(id);
+          }
+        }
+      }
+    }
+  }
   const named = (c: Record<string, unknown>) =>
     Array.isArray(c.disabled)
-      ? c.disabled.filter((n) => String(n).includes('test-guard'))
+      ? c.disabled.filter(
+          (n) => String(n).includes('test-guard') || ours.has(String(n)),
+        )
       : [];
   const disabled = named(now).filter((n) => !named(was).includes(n));
   return disabled.length > 0

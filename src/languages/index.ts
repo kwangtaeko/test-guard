@@ -71,21 +71,7 @@ export function analyzeSource(
   let checks: ValueCheck[] = [];
   try {
     counts = spec.count(tree.rootNode);
-    // Compared on the source, where strings aren't blanked; skipped when
-    // decoded escapes moved the offsets.
-    if (code.length === lf.length) {
-      const text = (n: Node) =>
-        lf
-          .slice(n.startIndex, n.endIndex)
-          .replace(/\s+/g, '')
-          .replace(/,(?=[)\]}])/g, '');
-      checks = spec.checks(tree.rootNode).map(({ node, sides, equal }) => ({
-        start: node.startPosition.row + 1,
-        end: node.endPosition.row + 1,
-        sides: [text(sides[0]), text(sides[1])],
-        equal,
-      }));
-    }
+    checks = valueChecks(spec, tree.rootNode, code, lf, language);
   } finally {
     tree.delete(); // WASM memory isn't garbage-collected
   }
@@ -119,6 +105,40 @@ export function analyzeSource(
     deadTests: counts.deadTests,
     checks,
   };
+}
+
+// Checks of values, with each side's text taken from the source, where
+// strings aren't blanked. When decoding escapes (`é`) changed the
+// stripped code's length, its offsets don't fit the source, so the
+// source's own tree is used, without its comments.
+function valueChecks(
+  spec: LanguageSpec,
+  stripped: Node,
+  code: string,
+  lf: string,
+  language: Language,
+): ValueCheck[] {
+  const text = (n: Node) =>
+    lf
+      .slice(n.startIndex, n.endIndex)
+      .replace(/\s+/g, '')
+      .replace(/,(?=[)\]}])/g, '');
+  const toValue = ({ node, sides, equal }: Check): ValueCheck => ({
+    start: node.startPosition.row + 1,
+    end: node.endPosition.row + 1,
+    sides: [text(sides[0]), text(sides[1])],
+    equal,
+  });
+  if (code.length === lf.length) return spec.checks(stripped).map(toValue);
+  const raw = parse(language, lf);
+  try {
+    return spec
+      .checks(raw.rootNode)
+      .filter(({ sides }) => sides.every((s) => !/comment/.test(s.type)))
+      .map(toValue);
+  } finally {
+    raw.delete();
+  }
 }
 
 export function analyzeFile(
