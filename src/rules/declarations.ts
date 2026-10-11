@@ -12,6 +12,7 @@ export interface Declaration {
   name: string;
   start: number; // lines, 1-based
   end: number;
+  scopeEnd: number; // last line where the name is visible
   value: string; // source text after `=`, without a trailing `;`
 }
 
@@ -54,6 +55,7 @@ export function declarations(
       name,
       start: i + 1,
       end: last + 1,
+      scopeEnd: scopeEnd(stripped, i, language) + 1,
       value: source
         .slice(i, last + 1)
         .join('\n')
@@ -65,14 +67,38 @@ export function declarations(
   return found;
 }
 
-// The value a name has at a line: its nearest declaration above, or its
-// only one (a Python module constant defined below the tests).
+// The last line index of the block a declaration at line index `i` is
+// in: until its enclosing `{ }` closes (JS, Java), or until a line indented
+// less (Python; a module constant reaches the end of the file).
+function scopeEnd(stripped: string[], i: number, language: Language): number {
+  if (language === 'python') {
+    const indent = (line: string) => line.length - line.trimStart().length;
+    const own = indent(stripped[i] ?? '');
+    for (let j = i + 1; j < stripped.length; j++) {
+      const line = stripped[j] ?? '';
+      if (line.trim() !== '' && indent(line) < own) return j - 1;
+    }
+    return stripped.length - 1;
+  }
+  let depth = 0;
+  for (let j = i; j < stripped.length; j++) {
+    for (const ch of stripped[j] ?? '') {
+      if (ch === '{') depth++;
+      else if (ch === '}' && --depth < 0) return j;
+    }
+  }
+  return stripped.length - 1;
+}
+
+// The value a name has at a line: its nearest declaration above whose block
+// reaches the line, or its only one if visible there (a Python module
+// constant defined below the tests).
 export function valueAt(
   list: Declaration[],
 ): (name: string, line: number) => string | undefined {
   return (name, line) => {
-    const named = list.filter((d) => d.name === name);
-    const above = named.filter((d) => d.end < line).at(-1);
-    return (above ?? (named.length === 1 ? named[0] : undefined))?.value;
+    const visible = list.filter((d) => d.name === name && line <= d.scopeEnd);
+    const above = visible.filter((d) => d.end < line).at(-1);
+    return (above ?? (visible.length === 1 ? visible[0] : undefined))?.value;
   };
 }

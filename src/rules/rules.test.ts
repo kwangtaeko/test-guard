@@ -2010,3 +2010,52 @@ describe('M11d: expected values for any matcher, value constructors', () => {
     ).toEqual([]);
   });
 });
+
+describe('M11d: false positives found in real history (gson 2bcaaed)', () => {
+  const tg008 = (path: string, from: string[], to: string[]) =>
+    compareFiles(
+      { before: file(path, ...from), after: file(path, ...to) },
+      { ...ctx, implementationChanged: false },
+      ['TG008'],
+    ).map(({ message }) => message);
+  const PATH = 'src/test/java/ATest.java';
+
+  it('leaves a value that is also passed to the code (a round trip)', () => {
+    const source = (json: string) => [
+      'class ATest {',
+      '  @Test void a() {',
+      `    String json = "${json}";`,
+      '    Cal cal = gson.fromJson(json, Cal.class);',
+      '    assertThat(cal.year()).isEqualTo(2009);',
+      '    assertThat(gson.toJson(cal)).isEqualTo(json);',
+      '  }',
+      '}',
+    ];
+    expect(
+      tg008(PATH, source('{year:2009}'), source('{\\"year\\":2009}')),
+    ).toEqual([]);
+  });
+
+  it("doesn't read a name declared in another method", () => {
+    const before = [
+      'class ATest {',
+      '  @Test void a() {',
+      '    String expected = "x";',
+      '    assertThat(f()).isEqualTo(expected);',
+      '  }',
+      '  @Test void b() {',
+      '    try { g(); } catch (Err expected) {',
+      '      assertThat(expected).hasMessageThat().isEqualTo("old");',
+      '    }',
+      '  }',
+      '}',
+    ];
+    const after = [
+      ...before.slice(0, 6),
+      '    var e = assertThrows(Err.class, () -> g());',
+      '    assertThat(e).hasMessageThat().isEqualTo("old");',
+      ...before.slice(9),
+    ];
+    expect(tg008(PATH, before, after)).toEqual([]);
+  });
+});

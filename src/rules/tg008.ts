@@ -105,6 +105,37 @@ function expectedNames(checks: ValueCheck[]): Set<string> {
   return found;
 }
 
+// Names passed to code outside the checks (`gson.fromJson(json, …)`): inputs
+// of the code under test, even when a check also compares with them. Not
+// function parameters, logging, or arguments inside checks and tables.
+function inputNames(stripped: string[], language: Language): Set<string> {
+  const names = new Set<string>();
+  for (let i = 0; i < stripped.length; i++) {
+    const line = stripped[i] ?? '';
+    if (
+      INLINE.test(line) ||
+      TABLE.test(line) ||
+      isAssertionLine(language, line)
+    ) {
+      i = statementEnd(stripped, i);
+      continue;
+    }
+    if (
+      /\bfunction\b|^\s*(?:async\s+)?def\s|=>|\b(?:console\.\w+|print|System\.out\.print\w*)\s*\(/.test(
+        line,
+      )
+    ) {
+      continue;
+    }
+    for (const [, name] of line.matchAll(
+      /[(,]\s*([A-Za-z_$][\w$]*)\s*(?=[,)])/g,
+    )) {
+      if (name) names.add(name);
+    }
+  }
+  return names;
+}
+
 // A literal compared by value: `'a'` = `"a"`, `1000` = `1_000` = `1e3`.
 function normalize(token: string): string {
   if (/^['"`]/.test(token)) return `s:${token.slice(1, -1)}`;
@@ -229,6 +260,12 @@ export const tg008: Rule = ({
       return false;
     });
   const expected = expectedNames([...before.checks, ...after.checks]);
+  for (const name of [
+    ...inputNames(before.lines, language),
+    ...inputNames(after.lines, language),
+  ]) {
+    expected.delete(name);
+  }
   const bound = (stripped: string[], source: string[]) =>
     declarations(stripped, source, language).filter(
       (d) => expected.has(d.name) && literal(stripped, d),
