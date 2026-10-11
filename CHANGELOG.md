@@ -2,6 +2,22 @@
 
 ## Unreleased
 
+- Probity: `import { testGuard } from 'test-guard/probity'` is a
+  [Probity](https://github.com/nizos/probity) rule that runs test-guard's
+  edit and shell checks in Probity's process, for Claude Code, Codex and
+  Copilot CLI. Checked end to end with @nizos/probity 1.10.1
+  (docs/agents/probity.md). `dist/probity.js` is a separate bundle;
+  `dist/cli.js` stays one file.
+- Gemini CLI: `install --agent gemini` and `hook gemini <pre-tool-use|stop>`
+  check `write_file`, `replace` and `run_shell_command` before they run and
+  stop the turn on weakened tests (`AfterAgent`). `replace` is worked out
+  the way Gemini applies it (exact, whitespace-loose and token matching); an
+  edit Gemini would hand to fuzzy matching or the model is blocked on test
+  files. TG006 covers `.gemini/settings.json` (comments allowed),
+  `hooksConfig.enabled: false`, test-guard's hook in `hooksConfig.disabled`,
+  system settings, `~/.gemini/trustedFolders.json`, and
+  `GEMINI_CLI_TRUST_WORKSPACE=false` and similar written to `.env`. Built from Gemini CLI's source (v0.63.0),
+  not yet tried in a live session (docs/agents/gemini.md).
 - TG007: an expected value replaced with the value under test, so the
   check compares a value with itself (`expect(add(1, 2)).toBe(3)` →
   `.toBe(add(1, 2))`, `assert total(c) == total(c)`,

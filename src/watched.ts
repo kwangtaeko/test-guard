@@ -46,6 +46,7 @@ const isHookFile = picomatch(
     '.github/workflows/*.{yml,yaml}',
     '.claude/settings{,.local}.json',
     '.codex/**',
+    '.gemini/settings.json',
     'package.json',
   ],
   { dot: true },

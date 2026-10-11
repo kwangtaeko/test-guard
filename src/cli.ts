@@ -15,6 +15,7 @@ import { createColors } from 'picocolors';
 import pkg from '../package.json' with { type: 'json' };
 import { runClaudeCodeHook } from './adapters/claude-code.js';
 import { runCodexHook } from './adapters/codex.js';
+import { runGeminiHook } from './adapters/gemini.js';
 import { findApproval } from './approval.js';
 import { runCheck } from './engine/check.js';
 import { type CompareMode, findRoot } from './engine/git.js';
@@ -96,7 +97,7 @@ export async function main(argv: string[], io: Io): Promise<number> {
     )
     .option(
       '--agent <name>',
-      'add agent hooks to its settings (claude-code, codex)',
+      'add agent hooks to its settings (claude-code, codex, gemini)',
     )
     .option('-y, --yes', 'write agent settings without asking')
     .action(async (flags: InstallFlags) => {
@@ -106,7 +107,7 @@ export async function main(argv: string[], io: Io): Promise<number> {
   program
     .command('hook')
     .description('run as an agent hook (hook JSON on stdin)')
-    .argument('<agent>', 'claude-code | codex')
+    .argument('<agent>', 'claude-code | codex | gemini')
     .argument('<event>', 'pre-tool-use | stop')
     .action(async (agent: string, event: string) => {
       exitCode = await hook(agent, event, io);
@@ -169,7 +170,7 @@ interface InstallFlags {
 async function install(flags: InstallFlags, io: Io): Promise<number> {
   if (!flags.preCommit && flags.agent === undefined) {
     io.stderr(
-      'test-guard: nothing to install (use --pre-commit or --agent <claude-code|codex>)\n',
+      'test-guard: nothing to install (use --pre-commit or --agent <claude-code|codex|gemini>)\n',
     );
     return 2;
   }
@@ -219,7 +220,9 @@ async function hook(agent: string, event: string, io: Io): Promise<number> {
       ? runClaudeCodeHook
       : agent === 'codex'
         ? runCodexHook
-        : null;
+        : agent === 'gemini'
+          ? runGeminiHook
+          : null;
   if (!run || !['pre-tool-use', 'stop'].includes(event)) {
     io.stdout(notifyUser(`test-guard: unsupported hook "${agent} ${event}"`));
     return 0;

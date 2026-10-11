@@ -39,6 +39,7 @@ import {
 import { toLf } from '../languages/index.js';
 import { normalizePath } from '../paths.js';
 import type { RuleId } from '../rules/index.js';
+import { hooksTurnedOff } from '../rules/tg006.js';
 import type { PatchedFile } from './apply-patch.js';
 import { recordSessionStart, sessionStart } from './session.js';
 import {
@@ -46,6 +47,7 @@ import {
   type FileOp,
   fileOps,
   findBypass,
+  GEMINI_UNTRUST,
   realPath,
   updatesSnapshots,
 } from './shell.js';
@@ -80,6 +82,14 @@ export function runHook(
   }
 }
 
+// One check outside an agent hook (the Probity rule): the reason to block,
+// or null to allow.
+export function blockReason(check: () => Violation[]): string | null {
+  contexts.clear();
+  const violations = check();
+  return violations.length > 0 ? blockedReason(violations) : null;
+}
+
 // Best effort: without a recorded start, Stop compares with HEAD as before.
 function rememberSessionStart(input: PreToolUseInput | StopInput): void {
   if (!input.sessionId) return;
@@ -110,7 +120,7 @@ export function checkFileChange(input: PatchedFile): Violation[] {
     .map((p) => p && untrackedGuard(p))
     .find(Boolean);
   if (untracked) return [untracked];
-  const unplugged = droppedPlugin(change);
+  const unplugged = droppedPlugin(change) ?? geminiHooksOff(change);
   if (unplugged) return [unplugged];
   const bypass = writtenBypass(change);
   if (bypass.length > 0) return bypass;
@@ -138,6 +148,27 @@ export function checkFileChange(input: PatchedFile): Violation[] {
   );
 }
 
+// An edit whose result can't be worked out ahead (the agent may apply it by
+// fuzzy matching): blocked when it touches a test, snapshot, runner or guard
+// file. Implementation code (TG009) is left to Stop, so loose edits to it
+// aren't held up.
+export function unpredictableEdit(file: string): Violation[] {
+  const path = realPath(file);
+  const root = findRepoRoot(dirname(path));
+  const relative = root && repoPath(root, path);
+  if (!root || !relative) return [];
+  const { ctx } = loadContext(root);
+  if (!isWatched(relative, { ...ctx, findLiteral: undefined })) return [];
+  return [
+    {
+      ruleId: 'test-guard',
+      message:
+        'cannot tell what this edit changes, since its old text is not in the file exactly; read the file again and retry with the exact text',
+      path: relative,
+    },
+  ];
+}
+
 // Files that keep test-guard running but that git doesn't track, so neither
 // Stop nor CI would see a change: git internals (hooks, config, session
 // records), local Claude Code settings, the installed package and plugin.
@@ -153,6 +184,11 @@ const UNTRACKED_GUARDS: [RegExp, string][] = [
     'edits the installed test-guard',
   ],
   [/(?:^|\/)\.claude\/plugins\/.*test-guard/i, 'edits the test-guard plugin'],
+  // Gemini CLI skips project hooks in a folder that isn't trusted.
+  [
+    /(?:^|\/)\.gemini\/trustedFolders\.json$/i,
+    'edits the folders Gemini CLI trusts, which decide whether its hooks run',
+  ],
 ];
 
 // Claude Code settings (in or outside the repository) that enabled the
@@ -182,6 +218,18 @@ function droppedPlugin(change: PatchedFile): Violation | null {
     : null;
 }
 
+// Gemini CLI settings that turn hooks off: the project's or user's
+// `.gemini/settings.json`, or system settings (`/etc/gemini-cli/`,
+// `C:\ProgramData\gemini-cli\`), which override both.
+function geminiHooksOff(change: PatchedFile): Violation | null {
+  const path = normalizePath(change.afterPath ?? '');
+  if (!/(?:^|\/)(?:\.gemini|gemini-cli)\/settings\.json$/i.test(path)) {
+    return null;
+  }
+  const message = hooksTurnedOff(change.before ?? '', change.after ?? '');
+  return message ? { ruleId: 'TG006', message, path } : null;
+}
+
 function untrackedGuard(path: string): Violation | null {
   const normalized = normalizePath(path);
   const hit = UNTRACKED_GUARDS.find(([re]) => re.test(normalized));
@@ -204,6 +252,10 @@ const WRITTEN_BYPASS: [RegExp, string][] = [
     '`core.hooksPath`, which skips test-guard’s git hook',
   ],
   [/disableAllHooks/, '`disableAllHooks`, which turns off agent hooks'],
+  [
+    GEMINI_UNTRUST,
+    'a setting that makes Gemini CLI distrust the folder, turning off its hooks',
+  ],
   [
     /test-guard-approved\s*[:=]/i,
     'a `Test-Guard-Approved` trailer (only humans approve)',

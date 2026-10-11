@@ -1,11 +1,12 @@
-// Agent hook settings for `install --agent`. Claude Code (.claude/settings.json)
-// and Codex (.codex/hooks.json) share the `hooks.<Event>[]` shape.
+// Agent hook settings for `install --agent`. Claude Code (.claude/settings.json),
+// Codex (.codex/hooks.json) and Gemini CLI (.gemini/settings.json) share the
+// `hooks.<Event>[]` shape.
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { diffLines } from '../engine/diff.js';
 import { InstallError, localCli } from './git-hook.js';
 
-export const AGENTS = ['claude-code', 'codex'] as const;
+export const AGENTS = ['claude-code', 'codex', 'gemini'] as const;
 export type Agent = (typeof AGENTS)[number];
 
 export interface SettingsPlan {
@@ -23,6 +24,8 @@ interface AgentSpec {
   // Windows routes Claude Code's shell commands through PowerShell when it is
   // enabled; Codex reports file edits as apply_patch.
   preToolUseMatcher: string;
+  // Event names when they differ from PreToolUse and Stop.
+  events?: { preToolUse: string; stop: string };
   handler(arg: string, local: string | null): Handler;
   note?: string;
 }
@@ -69,6 +72,24 @@ const SPECS: Record<Agent, AgentSpec> = {
           },
     note: 'Codex runs project hooks only after you trust them: open Codex and run /hooks.',
   },
+  gemini: {
+    file: ['.gemini', 'settings.json'],
+    preToolUseMatcher: 'write_file|replace|run_shell_command',
+    events: { preToolUse: 'BeforeTool', stop: 'AfterAgent' },
+    // Hooks run in the project folder (the one whose .gemini/settings.json
+    // was loaded), through bash or, on Windows, PowerShell, so a relative
+    // path works in both. `$GEMINI_PROJECT_DIR` is not used: Gemini puts it
+    // in quotes of its own, which break inside the command. The name lets
+    // `hooksConfig.disabled` be checked for it (TG006).
+    handler: (arg, local) => ({
+      name: `test-guard-${arg}`,
+      type: 'command',
+      command: local
+        ? `node ${local} hook gemini ${arg}`
+        : `npx --no-install test-guard hook gemini ${arg}`,
+    }),
+    note: 'Gemini CLI runs project hooks only in a trusted folder, and loads them when started from the project root.',
+  },
 };
 
 // Merges test-guard's hooks into the agent's settings without touching
@@ -83,11 +104,11 @@ export function planAgentHooks(root: string, agent: Agent): SettingsPlan {
 
   for (const { event, arg, matcher } of [
     {
-      event: 'PreToolUse',
+      event: spec.events?.preToolUse ?? 'PreToolUse',
       arg: 'pre-tool-use',
       matcher: spec.preToolUseMatcher,
     },
-    { event: 'Stop', arg: 'stop', matcher: undefined },
+    { event: spec.events?.stop ?? 'Stop', arg: 'stop', matcher: undefined },
   ]) {
     const entries = Array.isArray(hooks[event]) ? hooks[event] : [];
     const text = JSON.stringify(entries);

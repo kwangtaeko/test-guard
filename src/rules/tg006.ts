@@ -64,6 +64,9 @@ export const tg006: Rule = ({
     add('turned on `disableAllHooks`, which stops test-guard’s agent hooks');
   }
 
+  const off = hooksTurnedOff(beforeLines.join('\n'), afterLines.join('\n'));
+  if (off) add(off);
+
   const nonBlocking = (lines: string[]) =>
     lines.filter((_, i) => continuesOnError(lines, i)).length;
   if (nonBlocking(afterLines) > nonBlocking(beforeLines)) {
@@ -82,6 +85,44 @@ export const tg006: Rule = ({
   }
   return findings;
 };
+
+// JSON with `//` and `/* */` comments, which Gemini CLI settings may carry
+// (read with strip-json-comments). Throws like JSON.parse.
+export function parseJsonc(text: string): unknown {
+  return JSON.parse(
+    text.replace(
+      /("(?:\\.|[^"\\])*")|\/\/[^\n]*|\/\*[\s\S]*?\*\//g,
+      (_, str) => str ?? ' ',
+    ),
+  );
+}
+
+// Gemini CLI settings that turn hooks off: `hooksConfig.enabled: false`, or
+// test-guard's hook named in `hooksConfig.disabled`.
+export function hooksTurnedOff(before: string, after: string): string | null {
+  const config = (text: string) => {
+    try {
+      const value = parseJsonc(text);
+      return isObject(value) && isObject(value.hooksConfig)
+        ? (value.hooksConfig as Record<string, unknown>)
+        : {};
+    } catch {
+      return {};
+    }
+  };
+  const [was, now] = [config(before), config(after)];
+  if (now.enabled === false && was.enabled !== false) {
+    return 'turned off Gemini CLI hooks (`hooksConfig.enabled: false`), which stops test-guard';
+  }
+  const named = (c: Record<string, unknown>) =>
+    Array.isArray(c.disabled)
+      ? c.disabled.filter((n) => String(n).includes('test-guard'))
+      : [];
+  const disabled = named(now).filter((n) => !named(was).includes(n));
+  return disabled.length > 0
+    ? `turned off test-guard's Gemini CLI hook (\`hooksConfig.disabled\`: ${String(disabled[0])})`
+    : null;
+}
 
 // A line that runs test-guard removed, or changed (`|| true`, other
 // arguments). Indentation, a trailing comma and the package version don't
@@ -132,7 +173,7 @@ function agentHooks(
 ): { hooks: Set<string>; matchers: Set<string> } | null {
   let settings: unknown;
   try {
-    settings = JSON.parse(lines.join('\n'));
+    settings = parseJsonc(lines.join('\n'));
   } catch {
     return null;
   }

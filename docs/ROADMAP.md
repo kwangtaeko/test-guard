@@ -414,6 +414,7 @@ AST 기반 분석, 구현 변경 없는 기대값 변경 판정(TG007 확장), C
 ### 12.3 단계 C — 배포 (B와 병행, 수요 기반)
 - Probity 규칙으로 test-guard 판정을 쓰는 어댑터 가능성 확인. 경쟁보다 배포 채널로 봅니다.
 - Copilot CLI, Cursor, Gemini CLI 어댑터. 공식 사양 확인 후 `docs/agents/`에 기록합니다.
+  - 2026-10-11: **Probity 규칙**(`test-guard/probity`, 실제 Probity 1.10.1에서 확인)과 **Gemini CLI 어댑터**(소스 기준, 레드팀 반영, Windows PowerShell 실행 확인)를 구현했습니다. **Copilot CLI와 Cursor**는 편집 도구 입력 형태가 공식 문서에 없어, 실제 CLI에서 훅 입력을 기록해 확인한 뒤 구현합니다. 둘 다 `.claude/settings.json`의 Claude Code 훅도 실행하므로, 그 입력을 test-guard Claude Code 훅이 알아보는지도 함께 확인합니다.
 - **게이트 2**: 팀 기능 요청 이슈가 들어오면 단계 D.
 
 ### 12.4 단계 D — 팀 기능 (요청이 있을 때만)

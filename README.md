@@ -21,7 +21,7 @@ the bug stays. test-guard catches this with the same rules in three places:
 
 | Where | When | What happens |
 |---|---|---|
-| **Agent hook** (Claude Code, Codex) | before each edit or shell command | the edit is blocked and the agent is told to fix the implementation |
+| **Agent hook** (Claude Code, Codex, Gemini CLI) | before each edit or shell command | the edit is blocked and the agent is told to fix the implementation |
 | **git commit-msg hook** | on every commit | the commit fails unless a human approves it |
 | **GitHub Action** | on every pull request | the check fails unless a human adds an approval label |
 
@@ -46,7 +46,7 @@ dependencies: one bundle plus the grammars as WASM files.
 ## Set it up
 
 ```sh
-npx test-guard install --agent claude-code     # or: --agent codex
+npx test-guard install --agent claude-code     # or: --agent codex, --agent gemini
 npx test-guard install --pre-commit            # git commit-msg hook
 ```
 
@@ -155,7 +155,7 @@ test-guard check --base <ref>    HEAD ↔ merge-base(<ref>, HEAD)
   --summary <file>               append a Markdown report (GitHub job summary)
 
 test-guard install --pre-commit                 commit-msg hook
-test-guard install --agent <claude-code|codex>  agent hooks (shows a diff, asks first; --yes to skip)
+test-guard install --agent <claude-code|codex|gemini>  agent hooks (shows a diff, asks first; --yes to skip)
 ```
 
 Exit codes: `0` no violations, `1` violations, `2` execution error.
@@ -224,6 +224,36 @@ trust them: open Codex and run `/hooks`.
 On Windows the Codex hooks run through `npx` (about 0.7–0.9 s per call): a
 faster lookup didn't run reliably inside Codex. macOS and Linux run `node`
 directly.
+
+### Gemini CLI
+
+`install --agent gemini` adds the hooks to `.gemini/settings.json`
+(`BeforeTool` for `write_file`, `replace` and `run_shell_command`, and
+`AfterAgent`). Gemini CLI runs project hooks only in a trusted folder, started from the
+project root. test-guard works out a `replace` edit the way Gemini applies
+it, loose whitespace included; when Gemini would fall back to fuzzy matching
+or ask the model to fix the edit, the result can't be known, so such an edit
+to a test file is blocked and the agent is asked to retry with the exact
+text. Checked
+against Gemini CLI's source (v0.63.0), not yet in a live session; details in
+[docs/agents/gemini.md](docs/agents/gemini.md).
+
+### Probity
+
+If you already use [Probity](https://github.com/nizos/probity) (the
+successor of tdd-guard), add test-guard as one of its rules. It runs in
+Probity's process, for every agent Probity supports:
+
+```ts
+// probity.config.ts
+import { defineConfig } from '@nizos/probity'
+import { testGuard } from 'test-guard/probity'
+
+export default defineConfig({ rules: [testGuard()] })
+```
+
+Probity has no end-of-turn hook, so pair it with the commit-msg hook and the
+GitHub Action. Details in [docs/agents/probity.md](docs/agents/probity.md).
 
 Other agents: use the commit-msg hook and the GitHub Action.
 

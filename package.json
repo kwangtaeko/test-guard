@@ -27,6 +27,13 @@
   "bin": {
     "test-guard": "dist/cli.js"
   },
+  "exports": {
+    "./probity": {
+      "types": "./dist/probity.d.ts",
+      "default": "./dist/probity.js"
+    },
+    "./package.json": "./package.json"
+  },
   "files": [
     "dist",
     ".claude-plugin",

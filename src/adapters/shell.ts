@@ -198,6 +198,13 @@ const PROTECTED: [RegExp, string][] = [
   [new RegExp(`${B}\\.codex${E}`, 'i'), 'changes Codex settings'],
   [
     new RegExp(
+      `${B}(?:\\.gemini|gemini-cli)[\\\\/]+(?:settings[\\w.-]*|trustedFolders)\\.json${E}`,
+      'i',
+    ),
+    'changes Gemini CLI settings',
+  ],
+  [
+    new RegExp(
       `${B}node_modules[\\\\/]+(?:\\.bin[\\\\/]+)?test-guard(?:\\.\\w+)?${E}`,
       'i',
     ),
@@ -313,6 +320,11 @@ function commitMessages(segments: Segment[]): string[] {
   return messages.filter((m) => m !== '');
 }
 
+// Gemini CLI settings in the environment (also read from a project `.env`)
+// that make it treat the folder as untrusted, skipping project hooks.
+export const GEMINI_UNTRUST =
+  /\bGEMINI_CLI_TRUST_WORKSPACE\s*=\s*["']?false\b|\bGEMINI_RESTRICTED_MODE\s*=\s*["']?(?:true|1)\b|\bGEMINI_CLI_TRUSTED_FOLDERS_PATH\s*=/i;
+
 // Text that only shows up when something tries to get around test-guard.
 // Mentions are fine in read-only commands such as `grep`.
 const BYPASS_TEXT: [RegExp, string][] = [
@@ -322,6 +334,10 @@ const BYPASS_TEXT: [RegExp, string][] = [
   [
     /\bHUSKY\s*=\s*["']?0\b|\bLEFTHOOK\s*=\s*["']?(?:0|false)\b|\bLEFTHOOK_EXCLUDE\s*=|\bSKIP\s*=(?=[^\n]*\bgit\b[^\n]*\bcommit\b)/i,
     'turns off the git hook runner that starts test-guard',
+  ],
+  [
+    GEMINI_UNTRUST,
+    'makes Gemini CLI distrust the folder, which turns off its project hooks',
   ],
   [
     // `git rev-parse --git-dir` only prints the path.

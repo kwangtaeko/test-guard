@@ -13,7 +13,10 @@ const WASM = [
 
 // A function so the copy follows `outDir` (the hook e2e test builds elsewhere).
 export default defineConfig((options) => ({
-  entry: { cli: 'src/bin.ts' },
+  // The Probity rule (`test-guard/probity`) is a second, separate bundle:
+  // dist/cli.js stays one file, since hooks and the plugin run it by path.
+  entry: { cli: 'src/bin.ts', probity: 'src/probity.ts' },
+  splitting: false,
   format: ['esm'],
   target: 'node20',
   clean: true,
@@ -28,6 +31,8 @@ export default defineConfig((options) => ({
     const outDir = options.outDir ?? 'dist';
     const require = createRequire(import.meta.url);
     mkdirSync(outDir, { recursive: true });
+    // Its types, written by hand: tsup's declaration build fails here.
+    copyFileSync('src/probity.d.ts', join(outDir, 'probity.d.ts'));
     for (const file of WASM) {
       copyFileSync(
         require.resolve(file),

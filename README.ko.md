@@ -22,7 +22,7 @@ assertion을 빼거나, 테스트 실행 대상에서 제외해서 "고치는" �
 
 | 위치 | 시점 | 결과 |
 |---|---|---|
-| **에이전트 훅** (Claude Code, Codex) | 편집·셸 명령 실행 직전 | 편집을 막고, 구현을 고치라고 에이전트에게 알려줍니다 |
+| **에이전트 훅** (Claude Code, Codex, Gemini CLI) | 편집·셸 명령 실행 직전 | 편집을 막고, 구현을 고치라고 에이전트에게 알려줍니다 |
 | **git commit-msg 훅** | 커밋할 때마다 | 사람이 승인하지 않으면 커밋이 실패합니다 |
 | **GitHub Action** | PR마다 | 사람이 승인 라벨을 붙이지 않으면 검사가 실패합니다 |
 
@@ -46,7 +46,7 @@ Node.js 20 이상과 git이 필요합니다. 패키지는 런타임 의존성이
 ## 설정
 
 ```sh
-npx test-guard install --agent claude-code     # 또는: --agent codex
+npx test-guard install --agent claude-code     # 또는: --agent codex, --agent gemini
 npx test-guard install --pre-commit            # git commit-msg 훅
 ```
 
@@ -153,7 +153,7 @@ test-guard check --base <ref>    HEAD ↔ merge-base(<ref>, HEAD)
   --summary <file>               Markdown 보고서 추가 (GitHub Job Summary)
 
 test-guard install --pre-commit                 commit-msg 훅 설치
-test-guard install --agent <claude-code|codex>  에이전트 훅 설치 (diff를 보여주고 확인, --yes로 생략)
+test-guard install --agent <claude-code|codex|gemini>  에이전트 훅 설치 (diff를 보여주고 확인, --yes로 생략)
 ```
 
 종료 코드: `0` 위반 없음, `1` 위반 있음, `2` 실행 오류.
@@ -220,6 +220,33 @@ Codex에서 `/hooks`를 열어 신뢰하세요.
 
 Windows에서는 Codex 훅이 `npx`로 실행됩니다(호출당 약 0.7~0.9초). 더 빠른 방식이 Codex
 안에서 안정적으로 동작하지 않았기 때문입니다. macOS와 Linux는 `node`로 바로 실행됩니다.
+
+### Gemini CLI
+
+`install --agent gemini`는 `.gemini/settings.json`에 훅을 추가합니다(`write_file`,
+`replace`, `run_shell_command`에 대한 `BeforeTool`과 `AfterAgent`). Gemini CLI는 신뢰한
+폴더에서, 프로젝트 루트에서 시작했을 때만 프로젝트 훅을 실행합니다. test-guard는 `replace` 편집을
+Gemini가 적용하는 방식(공백 차이 허용 포함) 그대로 계산해 판정합니다. Gemini가 퍼지 매칭이나 모델
+보정으로 넘어가는 편집은 결과를 알 수 없으므로, 테스트 파일에 대한 그런 편집은 막고 정확한 문자열로
+다시 시도하라고 알려줍니다. Gemini CLI 소스(v0.63.0) 기준으로 확인했고 실제 세션에서는
+아직 확인하지 않았습니다. 자세한 내용은 [docs/agents/gemini.md](docs/agents/gemini.md)에 있습니다.
+
+### Probity
+
+[Probity](https://github.com/nizos/probity)(tdd-guard 후속)를 이미 쓰고 있다면 test-guard를
+규칙 하나로 추가하세요. Probity 프로세스 안에서 실행되고, Probity가 지원하는 모든 에이전트에
+적용됩니다.
+
+```ts
+// probity.config.ts
+import { defineConfig } from '@nizos/probity'
+import { testGuard } from 'test-guard/probity'
+
+export default defineConfig({ rules: [testGuard()] })
+```
+
+Probity에는 턴 종료 훅이 없으므로 commit-msg 훅과 GitHub Action을 함께 쓰세요. 자세한 내용은
+[docs/agents/probity.md](docs/agents/probity.md)에 있습니다.
 
 다른 에이전트는 commit-msg 훅과 GitHub Action을 사용하세요.
 
