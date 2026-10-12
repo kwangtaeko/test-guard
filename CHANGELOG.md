@@ -32,6 +32,8 @@
   workspace at Stop are checked; a hook error lets a Cursor tool call
   through instead of blocking it. Copilot patch headers are read in any
   case, indented or quoted, and tool arguments sent as JSON text are read.
+  Both agents were seen to stop a `test.skip` edit in live sessions and
+  report the bug in the implementation instead.
 - Probity: `import { testGuard } from 'test-guard/probity'` is a
   [Probity](https://github.com/nizos/probity) rule that runs test-guard's
   edit and shell checks in Probity's process, for Claude Code, Codex and
