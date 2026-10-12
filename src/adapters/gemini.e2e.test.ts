@@ -656,3 +656,38 @@ describe("Codex adversarial review: Gemini's path correction", () => {
     expect(skip(join(repo.dir, 'gone/math.test.js'))).toBe('');
   });
 });
+
+// User and system settings disable hooks that the project's settings define.
+describe('Codex adversarial review: custom-named hook disabled from user settings', () => {
+  it('denies disabling the project guard by its name from user settings', () => {
+    setup();
+    repo.write(
+      '.gemini/settings.json',
+      `${JSON.stringify({
+        hooks: {
+          BeforeTool: [
+            {
+              hooks: [
+                {
+                  name: 'guard',
+                  type: 'command',
+                  command:
+                    'npx --no-install test-guard hook gemini pre-tool-use',
+                },
+              ],
+            },
+          ],
+        },
+      })}\n`,
+    );
+    repo.commitAll();
+    const home = join(repo.dir, '..', `home-${Date.now()}`);
+    const user = (disabled: string[]) =>
+      hook('write_file', {
+        file_path: join(home, '.gemini/settings.json'),
+        content: `${JSON.stringify({ hooksConfig: { disabled } })}\n`,
+      });
+    expect(denied(user(['guard']))).toContain('hooksConfig.disabled');
+    expect(user(['other-hook'])).toBe('');
+  });
+});

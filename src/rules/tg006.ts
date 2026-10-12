@@ -114,17 +114,15 @@ export function blankComments(text: string): string {
 }
 
 // Gemini CLI settings that turn hooks off: `hooksConfig.enabled: false`, or
-// test-guard's hook named in `hooksConfig.disabled`.
-export function hooksTurnedOff(before: string, after: string): string | null {
-  const settings = (text: string): Record<string, unknown> => {
-    try {
-      const value = parseJsonc(text);
-      return isObject(value) ? value : {};
-    } catch {
-      return {};
-    }
-  };
-  const [old, current] = [settings(before), settings(after)];
+// test-guard's hook named in `hooksConfig.disabled`. `project` is the
+// project's own settings, for user or system settings, which disable hooks
+// defined elsewhere.
+export function hooksTurnedOff(
+  before: string,
+  after: string,
+  project: string[] = [],
+): string | null {
+  const [old, current] = [geminiSettings(before), geminiSettings(after)];
   const config = (s: Record<string, unknown>) =>
     isObject(s.hooksConfig) ? (s.hooksConfig as Record<string, unknown>) : {};
   const [was, now] = [config(old), config(current)];
@@ -133,7 +131,7 @@ export function hooksTurnedOff(before: string, after: string): string | null {
   }
   // test-guard's hooks by the names they have, whatever the user chose.
   const ours = new Set<string>();
-  for (const s of [old, current]) {
+  for (const s of [old, current, ...project.map(geminiSettings)]) {
     for (const entries of Object.values(isObject(s.hooks) ? s.hooks : {})) {
       for (const entry of Array.isArray(entries) ? entries : []) {
         for (const hook of isObject(entry) && Array.isArray(entry.hooks)
@@ -159,6 +157,15 @@ export function hooksTurnedOff(before: string, after: string): string | null {
   return disabled.length > 0
     ? `turned off test-guard's Gemini CLI hook (\`hooksConfig.disabled\`: ${String(disabled[0])})`
     : null;
+}
+
+function geminiSettings(text: string): Record<string, unknown> {
+  try {
+    const value = parseJsonc(text);
+    return isObject(value) ? value : {};
+  } catch {
+    return {};
+  }
 }
 
 // A line that runs test-guard removed, or changed (`|| true`, other

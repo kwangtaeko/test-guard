@@ -45,7 +45,7 @@ test-guard는 1~3번을 그대로 옮겨(`src/adapters/gemini-replace.ts`) Gemin
 
 ## 자기 보호
 - `.gemini/settings.json`은 훅 파일로 감시합니다(TG006): test-guard 훅 제거·변경, matcher 축소.
-- `hooksConfig.enabled: false`와 `hooksConfig.disabled`에 test-guard 훅 이름(`test-guard-pre-tool-use`, `test-guard-stop`) 추가를 막습니다. 저장소 밖 사용자 설정(`~/.gemini/settings.json`)도 같습니다.
+- `hooksConfig.enabled: false`와 `hooksConfig.disabled`에 test-guard 훅 이름(`test-guard-pre-tool-use`, `test-guard-stop`) 추가를 막습니다. 저장소 밖 사용자 설정(`~/.gemini/settings.json`)도 같습니다. 사용자가 훅 이름을 바꿨어도 그 이름으로 판정하며, 사용자·시스템 설정에서 끄는 경우에는 프로젝트 설정(작업 폴더와 git 루트의 `.gemini/settings.json`)에 정의된 test-guard 훅 이름까지 봅니다(Codex 리뷰).
 - 시스템 설정(`/etc/gemini-cli/settings.json`, `C:ProgramDatagemini-clisettings.json`)도 같습니다. 프로젝트 설정보다 우선하기 때문입니다.
 - 설정 파일의 `//`·`/* */` 주석은 지우고 해석합니다(Gemini는 strip-json-comments로 읽음).
 - `~/.gemini/trustedFolders.json` 편집을 막습니다. 폴더 신뢰를 풀면 프로젝트 훅이 모두 꺼지기 때문입니다. 셸로 이 파일들을 쓰는 것도 막습니다.

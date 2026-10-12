@@ -46,7 +46,8 @@
   the way Gemini applies it (exact, whitespace-loose and token matching); an
   edit Gemini would hand to fuzzy matching or the model is blocked on test
   files. TG006 covers `.gemini/settings.json` (comments allowed),
-  `hooksConfig.enabled: false`, test-guard's hook in `hooksConfig.disabled`,
+  `hooksConfig.enabled: false`, test-guard's hook in `hooksConfig.disabled`
+  (by any name it has in the project, also from user or system settings),
   system settings, `~/.gemini/trustedFolders.json`, and
   `GEMINI_CLI_TRUST_WORKSPACE=false` and similar written to `.env`. Built from Gemini CLI's source (v0.63.0),
   not yet tried in a live session (docs/agents/gemini.md).

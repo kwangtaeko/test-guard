@@ -72,6 +72,7 @@ export function runHook(
   contexts.clear();
   try {
     const input = parseHookInput(stdin);
+    hookCwd = resolve(input.cwd);
     rememberSessionStart(input);
     if (input.event === 'Stop') return onStop(input);
     const violations = checkToolUse(input);
@@ -221,12 +222,27 @@ function droppedPlugin(change: PatchedFile): Violation | null {
 // Gemini CLI settings that turn hooks off: the project's or user's
 // `.gemini/settings.json`, or system settings (`/etc/gemini-cli/`,
 // `C:\ProgramData\gemini-cli\`), which override both.
+// The folder the agent works in, for checks that look at the project from
+// a file outside it.
+let hookCwd = process.cwd();
+
 function geminiHooksOff(change: PatchedFile): Violation | null {
   const path = normalizePath(change.afterPath ?? '');
   if (!/(?:^|\/)(?:\.gemini|gemini-cli)\/settings\.json$/i.test(path)) {
     return null;
   }
-  const message = hooksTurnedOff(change.before ?? '', change.after ?? '');
+  // User or system settings can disable the project's hooks by name. Gemini
+  // reads the project's settings where it starts, likely the git root.
+  const project = [hookCwd, findRepoRoot(hookCwd)]
+    .filter((dir): dir is string => dir !== null)
+    .map((dir) => join(dir, '.gemini', 'settings.json'))
+    .filter((file) => existsSync(file))
+    .map((file) => readFileSync(file, 'utf8'));
+  const message = hooksTurnedOff(
+    change.before ?? '',
+    change.after ?? '',
+    project,
+  );
   return message ? { ruleId: 'TG006', message, path } : null;
 }
 
