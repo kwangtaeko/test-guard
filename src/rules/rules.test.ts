@@ -2519,3 +2519,186 @@ describe('TG008: an expected value assigned again', () => {
     expect(run('a.test.js', js, to)).toEqual([]);
   });
 });
+
+describe('TG008: an expected value assigned again, red-team re-check', () => {
+  const run = (path: string, from: string[], to: string[]) =>
+    compareFiles(
+      { before: file(path, ...from), after: file(path, ...to) },
+      { ...ctx, implementationChanged: false },
+      ['TG008'],
+    ).map(({ message }) => message);
+  const again = 'assigned the expected value `expected` again';
+  const js = (...lines: string[]) => [
+    "describe('a', () => {",
+    '  let expected;',
+    '  beforeEach(() => {',
+    ...lines.map((l) => `    ${l}`),
+    '  });',
+    "  test('a', () => {",
+    '    expect(add(5, 5)).toBe(expected);',
+    '  });',
+    '});',
+  ];
+  const inTest = (...lines: string[]) => [
+    "test('a', () => {",
+    '  let expected = 10;',
+    ...lines.map((l) => `  ${l}`),
+    '  expect(add(5, 5)).toEqual(expected);',
+    '});',
+  ];
+
+  it.each([
+    [
+      'set in beforeEach under a bare declaration',
+      js('expected = 10;'),
+      js('expected = 11;'),
+    ],
+    ['+= 1', inTest(), inTest('expected += 1;')],
+    ['++', inTest(), inTest('expected++;')],
+    ['a member', inTest(), inTest('expected.total = 11;')],
+    [
+      'after other code on the line',
+      inTest(),
+      inTest('reset(); expected = 11;'),
+    ],
+    ['under an if', inTest(), inTest('if (process.env.CI) expected = 11;')],
+    [
+      'on the declaration line',
+      inTest(),
+      [
+        "test('a', () => {",
+        '  let expected = 10; expected = 11;',
+        '  expect(add(5, 5)).toEqual(expected);',
+        '});',
+      ],
+    ],
+  ])('reports one %s', (_, from, to) => {
+    expect(run('a.test.js', from, to)).toEqual([
+      expect.stringContaining(again),
+    ]);
+  });
+
+  it('reports a Java field set again in @BeforeEach', () => {
+    const java = (value: number) => [
+      'class ATest {',
+      '  int expected;',
+      '  @BeforeEach void setUp() {',
+      `    expected = ${value};`,
+      '  }',
+      '  @Test void a() {',
+      '    assertEquals(expected, add(5, 5));',
+      '  }',
+      '}',
+    ];
+    expect(run('src/test/java/ATest.java', java(10), java(11))).toEqual([
+      expect.stringContaining(again),
+    ]);
+  });
+
+  it('reports an annotated Python assignment', () => {
+    expect(
+      run(
+        'test_a.py',
+        [
+          'def test_a():',
+          '    expected = 10',
+          '    assert add(5, 5) == expected',
+        ],
+        [
+          'def test_a():',
+          '    expected = 10',
+          '    expected: int = 11',
+          '    assert add(5, 5) == expected',
+        ],
+      ),
+    ).toEqual([expect.stringContaining(again)]);
+  });
+
+  const single = [
+    "test('a', () => {",
+    '  let expected = 10;',
+    '  expect(add(5, 5)).toBe(expected);',
+    '});',
+  ];
+  const shared = [
+    "describe('a', () => {",
+    '  let expected = 10;',
+    "  test('a', () => {",
+    '    expect(add(5, 5)).toBe(expected);',
+    '  });',
+    '});',
+  ];
+  it.each([
+    [
+      'a new check reusing the name after the old one',
+      single,
+      [
+        ...single.slice(0, 3),
+        '  expected = 5;',
+        '  expect(add(2, 3)).toBe(expected);',
+        '});',
+      ],
+    ],
+    [
+      'a loop over a table',
+      single,
+      [
+        ...single.slice(0, 3),
+        '  for (const [a, b, e] of [[1, 2, 3]]) {',
+        '    expected = e;',
+        '    expect(add(a, b)).toBe(expected);',
+        '  }',
+        '});',
+      ],
+    ],
+    [
+      'a new test setting the shared name',
+      shared,
+      [
+        ...shared.slice(0, 5),
+        "  test('b', () => {",
+        '    expected = 7;',
+        '    expect(add(3, 4)).toBe(expected);',
+        '  });',
+        '});',
+      ],
+    ],
+    [
+      'cleanup in afterEach',
+      shared,
+      [
+        ...shared.slice(0, 2),
+        '  afterEach(() => {',
+        '    expected = undefined;',
+        '  });',
+        ...shared.slice(2),
+      ],
+    ],
+  ])('leaves %s', (_, from, to) => {
+    expect(run('a.test.js', from, to)).toEqual([]);
+  });
+
+  it('leaves a new Python test with its own value of a module name', () => {
+    expect(
+      run(
+        'test_a.py',
+        [
+          'expected = 10',
+          '',
+          'def test_a():',
+          '    assert add(5, 5) == expected',
+        ],
+        [
+          'expected = 10',
+          '',
+          'def test_b():',
+          '    expected = 7',
+          '    assert add(3, 4) == expected',
+          '',
+          'def test_a():',
+          '    assert add(5, 5) == expected',
+        ],
+      ),
+    ).toEqual([]);
+  });
+});

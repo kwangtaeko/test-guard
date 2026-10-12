@@ -399,48 +399,156 @@ export const tg008: Rule = ({
     });
   }
 
-  // An expected value bound again over the one a later check reads
-  // (`expected = 11` under `let expected = 10`, in a `beforeEach`, a second
-  // Python assignment): no changed assertion to pair it with.
-  const declared = declarations(after.lines, afterLines, language);
+  // An expected value given again before a check that was already there
+  // reads it (`expected = 11` under `let expected = 10`, in a
+  // `beforeEach`, `+= 1`, `expected.total = 11`, a second Python
+  // assignment): no changed assertion to pair it with. A value that only
+  // new checks read, or that cleanup code sets, is left alone.
   const reported = new Set(findings.map((f) => f.line));
+  const reads = (name: string) =>
+    new RegExp(String.raw`(?<![\w$.])${name}(?![\w$])`);
   for (const n of added) {
-    const binding = BINDING.exec(after.lines[n - 1] ?? '');
-    const name = binding?.[1];
-    const value = BINDING.exec(afterLines[n - 1] ?? '')?.[2];
-    if (
-      !name ||
-      value === undefined ||
-      reported.has(n) ||
-      !expected.has(name) ||
-      isCode(value) ||
-      inArguments(after.lines, n) ||
-      !declared.some(
-        (d) =>
-          d.name === name &&
-          d.start < n &&
-          d.scopeEnd >= n &&
-          !added.has(d.start),
-      ) ||
-      !after.checks.some(
-        (c) =>
-          c.start > n &&
-          c.sides.some((s) =>
-            new RegExp(`(?<![\\w$.])${name}(?![\\w$])`).test(s),
-          ),
-      )
-    ) {
-      continue;
+    if (reported.has(n) || inArguments(after.lines, n)) continue;
+    for (const { name, value, offset } of bindings(
+      after.lines[n - 1] ?? '',
+      afterLines[n - 1] ?? '',
+      language,
+    )) {
+      if (!expected.has(name) || (value !== null && !isLiteral(value))) {
+        continue;
+      }
+      // Bound before, on an earlier line or earlier on this one.
+      const bound = (line: number, upTo?: number) =>
+        bindsName(name, (after.lines[line - 1] ?? '').slice(0, upTo));
+      let earlier = bound(n, offset);
+      for (let k = 1; k < n && !earlier; k++) earlier = bound(k);
+      if (!earlier) continue;
+      // The first check after it that reads the name, with no other binding
+      // in between, was there before this change.
+      const check = after.checks
+        .filter(
+          (c) => c.start > n && c.sides.some((side) => reads(name).test(side)),
+        )
+        .sort((a, b) => a.start - b.start)[0];
+      if (!check) continue;
+      let between = false;
+      for (let k = n + 1; k < check.start && !between; k++) between = bound(k);
+      let existing = true;
+      for (let k = check.start; k <= check.end; k++) {
+        if (added.has(k)) existing = false;
+      }
+      if (
+        between ||
+        !existing ||
+        cleanup(after.lines, n, language) ||
+        (language === 'python' &&
+          enclosingDef(after.lines, n) !==
+            enclosingDef(after.lines, check.start))
+      ) {
+        continue;
+      }
+      findings.push({
+        ruleId: 'TG008',
+        path: afterPath,
+        line: n,
+        message: `assigned the expected value \`${name}\` again ${NOTE}: \`${brief([afterLines[n - 1] ?? ''])}\``,
+      });
+      reported.add(n);
+      break;
     }
-    findings.push({
-      ruleId: 'TG008',
-      path: afterPath,
-      line: n,
-      message: `assigned the expected value \`${name}\` again ${NOTE}: \`${brief([afterLines[n - 1] ?? ''])}\``,
-    });
   }
   return findings;
 };
+
+// Bindings in a line (statements split at `;` outside Python): a name
+// given a value (`expected = 11`, `let expected: number = 11`, `if (c)
+// expected = 11`), changed in place (`+= 1`, `++`, value null) or through
+// a member (`expected.total = 11`, `expected[0] = 11`). The value is read
+// from `source`; `offset` is where the statement starts.
+function bindings(
+  stripped: string,
+  source: string,
+  language: Language,
+): { name: string; value: string | null; offset: number }[] {
+  const found: { name: string; value: string | null; offset: number }[] = [];
+  const parts =
+    language === 'python' ? [stripped] : stripped.split(';').filter(Boolean);
+  let offset = 0;
+  for (const part of parts) {
+    const at = stripped.indexOf(part, offset);
+    offset = at + part.length;
+    const set = SET.exec(part);
+    if (set?.[1]) {
+      const operator = set[3] ?? '=';
+      const from = at + (set.index ?? 0) + set[0].length;
+      const value = source
+        .slice(from, at + part.length)
+        .trim()
+        .replace(/;$/, '');
+      const plain = operator === '=' && !set[2];
+      found.push({ name: set[1], value: plain ? value : null, offset: at });
+      continue;
+    }
+    const step = STEP.exec(part);
+    const name = step?.[1] ?? step?.[2];
+    if (name) found.push({ name, value: null, offset: at });
+  }
+  return found;
+}
+
+const SET =
+  /^\s*(?:if\s*\(.*\)\s*)?(?:(?:const|let|var)\s+)?([A-Za-z_$][\w$]*)((?:\.[\w$]+|\[[^\]]*\])*)\s*(?::[^=]*)?([-+*/%]?=)(?![=>])/;
+const STEP =
+  /^\s*(?:(?:\+\+|--)([A-Za-z_$][\w$]*)|([A-Za-z_$][\w$]*)(?:\+\+|--))\s*$/;
+
+// A value written out: no call, and not just another name (`expected = e`
+// in a loop).
+const isLiteral = (value: string) =>
+  !isCode(value) &&
+  !(/^[A-Za-z_$][\w$]*$/.test(value) && !LITERAL_WORDS.has(value));
+
+// Whether a line declares or sets `name`: `let expected;`, `int expected;`,
+// `expected = 10`, `expected: int = 10`.
+function bindsName(name: string, line: string): boolean {
+  return new RegExp(
+    String.raw`(?<![\w$.])${name}\s*(?::[^=;]*)?(?:=(?![=>])|;|$)`,
+  ).test(line);
+}
+
+// Whether line `n` is in cleanup code, which runs after the checks:
+// `afterEach`/`afterAll` (JS), `@AfterEach`/`@After` (Java), `teardown`
+// methods (Python).
+function cleanup(stripped: string[], n: number, language: Language): boolean {
+  if (language === 'python') {
+    return /^(?:teardown|tearDown)\w*$/.test(enclosingDef(stripped, n) ?? '');
+  }
+  const open: number[] = [];
+  stripped.slice(0, n - 1).forEach((line, i) => {
+    for (const ch of line) {
+      if (ch === '{') open.push(i);
+      else if (ch === '}') open.pop();
+    }
+  });
+  return open.some((i) =>
+    /\bafter(?:Each|All)\b|@After(?:Each|All)?\b/.test(
+      `${stripped[i - 1] ?? ''} ${stripped[i] ?? ''}`,
+    ),
+  );
+}
+
+// The name of the Python function line `n` is in, by indentation.
+function enclosingDef(stripped: string[], n: number): string | undefined {
+  const indent = (line: string) => line.length - line.trimStart().length;
+  let limit = indent(stripped[n - 1] ?? '');
+  for (let k = n - 1; k >= 1; k--) {
+    const line = stripped[k - 1] ?? '';
+    if (line.trim() === '' || indent(line) >= limit) continue;
+    const def = /^\s*(?:async\s+)?def\s+(\w+)/.exec(line);
+    if (def) return def[1];
+    limit = indent(line);
+  }
+  return undefined;
+}
 
 // Whether line `n` starts inside parentheses or square brackets, as a
 // keyword argument does (`f(\n  r=3,\n)`), rather than in a block.
@@ -455,8 +563,3 @@ function inArguments(stripped: string[], n: number): boolean {
   const last = open.at(-1);
   return last === '(' || last === '[';
 }
-
-// A name given a value, with or without a declaration: `expected = 11`,
-// `let expected = 11;`. Group 2 is the value.
-const BINDING =
-  /^\s*(?:(?:const|let|var)\s+)?([A-Za-z_$][\w$]*)\s*=(?![=>])\s*(.*?)\s*;?\s*$/;
