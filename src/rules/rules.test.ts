@@ -2215,7 +2215,7 @@ describe('M11d leftovers: signs, constants, partial and loose matchers', () => {
       'test_a.py',
       'assert area(2) == pytest.approx(12.566)',
       'assert area(2) == pytest.approx(12.566, abs=100)',
-      'pytest.approx(y, abs/rel=…)',
+      'pytest.approx(y, tolerance)',
     ],
   ])('TG007 reports %s: %s', (path, from, to, label) => {
     expect(run('TG007', path, from, to)).toEqual([
@@ -2236,5 +2236,188 @@ describe('M11d leftovers: signs, constants, partial and loose matchers', () => {
     ],
   ])('TG007 leaves %s: %s', (path, from, to) => {
     expect(run('TG007', path, from, to)).toEqual([]);
+  });
+});
+
+describe('M11d leftovers, red-team re-check', () => {
+  const run = (
+    rule: 'TG007' | 'TG008',
+    path: string,
+    from: string,
+    to: string,
+  ) =>
+    compareFiles(
+      {
+        before: file(path, ...from.split('\n')),
+        after: file(path, ...to.split('\n')),
+      },
+      { ...ctx, implementationChanged: false },
+      [rule],
+    ).map(({ message }) => message);
+  const js = (...body: string[]) =>
+    ["test('a', () => {", ...body.map((l) => `  ${l}`), '});'].join('\n');
+
+  it.each([
+    [
+      'a loose matcher wrapped by Prettier',
+      js("expect(f(u)).toEqual({ id: 1, name: 'a', role: 'admin' });"),
+      js(
+        'expect(f(u)).toEqual(',
+        '  expect.objectContaining({ id: 1 }),',
+        ');',
+      ),
+    ],
+    [
+      'a loose matcher nested in the value',
+      js("expect(f(u)).toEqual({ id: 1, name: 'a' });"),
+      js("expect(f(u)).toEqual({ id: expect.any(Number), name: 'a' });"),
+    ],
+    [
+      'a nested loose matcher on a wrapped line',
+      js('expect(f(u)).toEqual({', '  id: 1,', "  name: 'a',", '});'),
+      js(
+        'expect(f(u)).toEqual({',
+        '  id: expect.any(Number),',
+        "  name: 'a',",
+        '});',
+      ),
+    ],
+    [
+      'a snapshot',
+      js('expect(f(u)).toEqual({ id: 1 });'),
+      js('expect(f(u)).toMatchSnapshot();'),
+    ],
+    [
+      'a property',
+      js('expect(f(u)).toEqual({ id: 1 });'),
+      js("expect(f(u)).toHaveProperty('id');"),
+    ],
+    [
+      'a member',
+      js('expect(f(u)).toEqual([1, 2, 3]);'),
+      js('expect(f(u)).toContain(1);'),
+    ],
+  ])('TG007 reports %s', (_, from, to) => {
+    expect(run('TG007', 'a.test.js', from, to)).toEqual([
+      expect.stringContaining('weakened assertion'),
+    ]);
+  });
+
+  it.each([
+    [
+      'a tolerance wrapped by Black',
+      'def test_a():\n    assert f(2) == 12.566',
+      'def test_a():\n    assert f(2) == pytest.approx(\n        12.566, abs=100\n    )',
+    ],
+    [
+      'approx on the left',
+      'def test_a():\n    assert f(2) == 12.566',
+      'def test_a():\n    assert pytest.approx(12.566, abs=100) == f(2)',
+    ],
+    [
+      'a positional tolerance',
+      'def test_a():\n    assert f(2) == 12.566',
+      'def test_a():\n    assert f(2) == pytest.approx(12.566, 100)',
+    ],
+    [
+      'assertAlmostEqual with a delta',
+      'class T(TestCase):\n    def test_a(self):\n        self.assertEqual(f(2), 12.566)',
+      'class T(TestCase):\n    def test_a(self):\n        self.assertAlmostEqual(f(2), 12.566, delta=100)',
+    ],
+    [
+      'assertIn',
+      'class T(TestCase):\n    def test_a(self):\n        self.assertEqual(f(2), [1, 2])',
+      'class T(TestCase):\n    def test_a(self):\n        self.assertIn(1, f(2))',
+    ],
+  ])('TG007 reports %s', (_, from, to) => {
+    expect(run('TG007', 'test_a.py', from, to)).toEqual([
+      expect.stringContaining('weakened assertion'),
+    ]);
+  });
+
+  it.each([
+    [
+      'a loose matcher joined onto one line',
+      js(
+        'expect(f(u)).toEqual(',
+        '  expect.objectContaining({ id: 1 }),',
+        ');',
+      ),
+      js('expect(f(u)).toEqual(expect.objectContaining({ id: 1 }));'),
+    ],
+    [
+      'a test replaced by an unrelated one using toMatchObject',
+      [
+        "test('old', () => {",
+        '  expect(f(u)).toEqual({ id: 1 });',
+        '});',
+        '',
+        "test('keep', () => {",
+        '  expect(g()).toBe(2);',
+        '});',
+      ].join('\n'),
+      [
+        "test('keep', () => {",
+        '  expect(g()).toBe(2);',
+        '});',
+        '',
+        "test('new', () => {",
+        '  expect(h()).toMatchObject({ id: 4 });',
+        '});',
+      ].join('\n'),
+    ],
+  ])('TG007 leaves %s', (_, from, to) => {
+    expect(run('TG007', 'a.test.js', from, to)).toEqual([]);
+  });
+
+  it.each([
+    [
+      'a PascalCase enum',
+      'expect(f(u)).toBe(Status.Active);',
+      'expect(f(u)).toBe(Status.Inactive);',
+    ],
+    [
+      'a bare constant',
+      'expect(f(u)).toBe(ACTIVE);',
+      'expect(f(u)).toBe(INACTIVE);',
+    ],
+  ])('TG008 reports %s', (_, from, to) => {
+    expect(run('TG008', 'a.test.ts', from, to)).toEqual([
+      expect.stringContaining('changed asserted values'),
+    ]);
+  });
+
+  it('TG008 leaves a constant passed to the code under test', () => {
+    expect(
+      run(
+        'TG008',
+        'a.test.ts',
+        'expect(f(MOCK.USER)).toBe(1);',
+        'expect(f(MOCK.MEMBER)).toBe(1);',
+      ),
+    ).toEqual([]);
+  });
+});
+
+describe('M11d leftovers: false positives found in real history (gson 9a492d7b55)', () => {
+  it('reads Boolean.TRUE as true', () => {
+    const path = 'src/test/java/ATest.java';
+    const body = (value: string) => [
+      'class ATest {',
+      '  @Test void a() {',
+      `    assertThat(gson.fromJson("true", boolean.class)).isEqualTo(${value});`,
+      '  }',
+      '}',
+    ];
+    expect(
+      compareFiles(
+        {
+          before: file(path, ...body('Boolean.TRUE')),
+          after: file(path, ...body('true')),
+        },
+        { ...ctx, implementationChanged: false },
+        ['TG008'],
+      ),
+    ).toEqual([]);
   });
 });

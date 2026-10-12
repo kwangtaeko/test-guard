@@ -51,11 +51,18 @@
   system settings, `~/.gemini/trustedFolders.json`, and
   `GEMINI_CLI_TRUST_WORKSPACE=false` and similar written to `.env`. Built from Gemini CLI's source (v0.63.0),
   not yet tried in a live session (docs/agents/gemini.md).
-- TG007: `toEqual` → `toMatchObject`, a concrete value → `expect.anything()`
-  / `expect.any()` / `expect.objectContaining()`, and a tolerance added to an
-  exact Python comparison (`== pytest.approx(y, abs=…)`) are reported as
-  weakened. TG008: a flipped sign (`-1` → `1`) and another capitalized
-  constant (`Status.ACTIVE` → `Status.INACTIVE`) count as changed values.
+- TG007: an exact value replaced by part of it or by any value is reported
+  as weakened: `toMatchObject`, `toHaveProperty`, `toContain`,
+  `toContainEqual`, `toBeInstanceOf`, a snapshot, `expect.anything()` /
+  `expect.any()` / `expect.objectContaining()` (also nested in the value),
+  a tolerance given to `pytest.approx` (keyword or positional, either side),
+  `assertAlmostEqual(…, delta/places=…)`, `assertIn`, `assertIsInstance`,
+  and Java `assertInstanceOf`. These count only in place of an exact
+  matcher in the same change, since new tests use them too. An assertion
+  is judged as a whole, so Prettier or Black wrapping it doesn't hide or
+  fake a weakening. TG008: a flipped sign (`-1` → `1`) and another
+  constant on the expected side (`Status.ACTIVE`, `Status.Active`, `MAX`)
+  count as changed values; constants passed to the code under test don't.
 - TG007: an expected value replaced with the value under test, so the
   check compares a value with itself (`expect(add(1, 2)).toBe(3)` →
   `.toBe(add(1, 2))`, `assert total(c) == total(c)`,

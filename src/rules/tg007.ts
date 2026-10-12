@@ -1,20 +1,34 @@
-import type { Analysis, ValueCheck } from '../languages/index.js';
+import {
+  type Analysis,
+  isAssertionLine,
+  type ValueCheck,
+} from '../languages/index.js';
 import type { Language } from '../types.js';
-import { declarations, valueAt } from './declarations.js';
+import { declarations, statementEnd, valueAt } from './declarations.js';
 import type { Rule, RuleFinding } from './types.js';
 
 // Assertion weakening (0.1: matcher swaps only, ROADMAP §3.4).
 // Within each hunk, deleted lines with a strong matcher are paired in order
 // with added lines of the same group: first with added strong lines (strength
-// kept), then with added weak lines (reported). Meaningless assertions on added
-// lines are reported on their own. Lines are matched after comment/string
-// blanking.
+// kept), then with added weak lines (reported). A line is judged by the whole
+// assertion it belongs to, so wrapping one over several lines changes
+// nothing. Meaningless assertions on added lines are reported on their own.
+// Lines are matched after comment/string blanking.
 
 interface Matcher {
   re: RegExp;
   group: 'value' | 'throw';
   label?: string;
+  // Common in new tests too (`toMatchObject`, `toContain`): only reported
+  // in place of a strong matcher in the same hunk, not counted file-wide.
+  pairOnly?: boolean;
 }
+
+// Matchers that accept any value of a kind, or part of one.
+const LOOSE = String.raw`\bexpect\.(?:anything|any|objectContaining|arrayContaining)\s*\(`;
+// `approx(` given more than its value: a tolerance (`abs=`, `rel=`, or the
+// second positional argument).
+const TOLERANCE = String.raw`\bapprox\s*\((?:[^(),[\]{}]|\([^()]*\)|\[[^\]]*\]|\{[^}]*\})*,`;
 
 interface Spec {
   strong: Matcher[];
@@ -26,7 +40,9 @@ const SPECS: Record<Language, Spec> = {
   js: {
     strong: [
       {
-        re: /(?<!\.not)\.(?:toBe|toEqual|toStrictEqual|toHaveLength)\s*\((?!\s*expect\.(?:anything|any|objectContaining|arrayContaining)\s*\()/,
+        re: new RegExp(
+          String.raw`(?<!\.not)\.(?:toBe|toEqual|toStrictEqual|toHaveLength)\s*\((?!.*${LOOSE})`,
+        ),
         group: 'value',
       },
       { re: /\.toThrow\s*\(\s*[^\s)]/, group: 'throw', label: 'toThrow(X)' },
@@ -36,13 +52,21 @@ const SPECS: Record<Language, Spec> = {
         re: /\.(?:toBeDefined|toBeTruthy|not\.toBeNull|not\.toBeUndefined)\s*\(/,
         group: 'value',
       },
-      // Part of the value (`toMatchObject`, `expect.objectContaining`), or
-      // any value of a type (`expect.any(Number)`, `expect.anything()`).
-      { re: /\.toMatchObject\s*\(/, group: 'value' },
+      // Part of the value (`toMatchObject`, `expect.objectContaining`, also
+      // nested), any value of a type (`expect.any(Number)`), a property, a
+      // member, an approximation, or whatever a snapshot records.
       {
-        re: /\.(?:toBe|toEqual|toStrictEqual)\s*\(\s*expect\.(?:anything|any|objectContaining|arrayContaining)\s*\(/,
+        re: new RegExp(
+          String.raw`\.(?:toBe|toEqual|toStrictEqual)\s*\(.*${LOOSE}`,
+        ),
         group: 'value',
         label: 'expect.anything() / any() / objectContaining()',
+        pairOnly: true,
+      },
+      {
+        re: /\.(?:toMatchObject|toHaveProperty|toContain|toContainEqual|toBeInstanceOf|toMatchSnapshot|toMatchInlineSnapshot)\s*\(/,
+        group: 'value',
+        pairOnly: true,
       },
       // An exact value replaced by "anything but" or a range.
       {
@@ -61,7 +85,9 @@ const SPECS: Record<Language, Spec> = {
     strong: [
       { re: /(?<![\w.])self\.assertEquals?\s*\(/, group: 'value' },
       {
-        re: /(?<![\w.])assert(?=[\s(])(?!.*\bapprox\s*\(.*\b(?:abs|rel)\s*=).*==/,
+        re: new RegExp(
+          String.raw`(?<![\w.])assert(?=[\s(])(?!.*${TOLERANCE}).*==`,
+        ),
         group: 'value',
         label: 'assert x == y',
       },
@@ -83,11 +109,26 @@ const SPECS: Record<Language, Spec> = {
         group: 'value',
         label: 'assert x',
       },
-      // A tolerance given to an exact comparison.
+      // A tolerance given to an exact comparison, a member or a type in
+      // place of the value.
       {
-        re: /(?<![\w.])assert(?=[\s(]).*==.*\bapprox\s*\(.*\b(?:abs|rel)\s*=/,
+        re: new RegExp(
+          String.raw`(?<![\w.])assert(?=[\s(])(?=.*==).*${TOLERANCE}`,
+        ),
         group: 'value',
-        label: 'assert x == pytest.approx(y, abs/rel=…)',
+        label: 'assert x == pytest.approx(y, tolerance)',
+        pairOnly: true,
+      },
+      {
+        re: /(?<![\w.])self\.assertAlmostEquals?\s*\(.*\b(?:delta|places)\s*=/,
+        group: 'value',
+        label: 'assertAlmostEqual(…, delta/places=…)',
+        pairOnly: true,
+      },
+      {
+        re: /(?<![\w.])self\.(?:assertIn|assertIsInstance|assertDictContainsSubset)\s*\(/,
+        group: 'value',
+        pairOnly: true,
       },
       {
         re: /(?<![\w.])assert(?=[\s(])(?!.*==).*!=/,
@@ -125,6 +166,11 @@ const SPECS: Record<Language, Spec> = {
         group: 'value',
       },
       {
+        re: /(?<![\w$])assertInstanceOf\s*\(/,
+        group: 'value',
+        pairOnly: true,
+      },
+      {
         re: /(?<![\w$])assertThrows\s*\(\s*(?:java\.lang\.)?(?:Exception|Throwable)\.class/,
         group: 'throw',
         label: 'assertThrows(Exception.class)',
@@ -143,14 +189,49 @@ interface Hit {
   label: string;
 }
 
+// Which lines of a file hold an assertion, worked out once per file.
+const ASSERTIONS = new WeakMap<string[], boolean[]>();
+
+// The text of the assertion a line belongs to, over the lines its brackets
+// span (Prettier and Black wrap them), and its first line; the line alone
+// when it isn't in one.
+function statementAt(
+  lines: string[],
+  line: number,
+  language: Language,
+): { start: number; text: string } {
+  let assertions = ASSERTIONS.get(lines);
+  if (!assertions) {
+    assertions = lines.map((l) => isAssertionLine(language, l));
+    ASSERTIONS.set(lines, assertions);
+  }
+  let found = { start: line, text: lines[line - 1] ?? '' };
+  for (let start = line; start >= Math.max(1, line - 30); start--) {
+    if (!assertions[start - 1]) continue;
+    const end = statementEnd(lines, start - 1) + 1;
+    if (end < line) continue;
+    const text = lines
+      .slice(start - 1, end)
+      .map((l) => l.trim())
+      .join(' ');
+    found = { start, text };
+  }
+  return found;
+}
+
+// One hit per assertion, at the first of `lineNumbers` in it.
 function hits(
   matchers: Matcher[],
   lineNumbers: number[],
   lines: string[],
+  language: Language,
 ): Hit[] {
   const result: Hit[] = [];
+  const seen = new Set<number>();
   for (const line of lineNumbers) {
-    const text = lines[line - 1] ?? '';
+    const { start, text } = statementAt(lines, line, language);
+    if (seen.has(start)) continue;
+    seen.add(start);
     for (const matcher of matchers) {
       const match = matcher.re.exec(text);
       if (!match) continue;
@@ -171,7 +252,8 @@ export const tg007: Rule = ({
   afterLines,
 }) => {
   if (!after) return [];
-  const spec = SPECS[after.stats.language];
+  const language = after.stats.language;
+  const spec = SPECS[language];
   const path = after.stats.path;
   const findings: RuleFinding[] = [];
   const pairedPerGroup = { value: 0, throw: 0 };
@@ -179,9 +261,14 @@ export const tg007: Rule = ({
   for (const hunk of hunks) {
     const reported = new Set<number>();
     if (before) {
-      const strongAdded = hits(spec.strong, hunk.added, after.lines);
-      const weakAdded = hits(spec.weak, hunk.added, after.lines);
-      for (const strong of hits(spec.strong, hunk.deleted, before.lines)) {
+      const strongAdded = hits(spec.strong, hunk.added, after.lines, language);
+      const weakAdded = hits(spec.weak, hunk.added, after.lines, language);
+      for (const strong of hits(
+        spec.strong,
+        hunk.deleted,
+        before.lines,
+        language,
+      )) {
         const kept = strongAdded.findIndex((h) => h.group === strong.group);
         if (kept !== -1) {
           strongAdded.splice(kept, 1);
@@ -284,7 +371,12 @@ export const tg007: Rule = ({
     const added = new Set(hunks.flatMap((hunk) => hunk.added));
     for (const group of ['value', 'throw'] as const) {
       const count = (matchers: Matcher[], lines: string[]) =>
-        hits(matchers, all(lines), lines).filter((h) => h.group === group);
+        hits(
+          matchers.filter((m) => !m.pairOnly),
+          all(lines),
+          lines,
+          language,
+        ).filter((h) => h.group === group);
       const strongDrop =
         count(spec.strong, before.lines).length -
         count(spec.strong, after.lines).length;

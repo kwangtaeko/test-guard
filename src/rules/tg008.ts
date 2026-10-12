@@ -153,8 +153,8 @@ interface Shape {
 
 // Brackets and commas shape a value (`[[1, 2], [3]]` vs `[[1, 2, 3]]`);
 // other punctuation, such as an operator, is left to TG007. A sign is part
-// of the number it stands before (`-1`), and a constant named in capitals
-// (`Status.ACTIVE`, `Color.RED`) is a value. A test title
+// of the number it stands before (`-1`), and a constant on the expected side
+// (`constants`: `Status.ACTIVE`, `Color.Red`, `MAX`) is a value. A test title
 // (`it('…', …)` on the same line), comments and a trailing comma aren't
 // values. A name bound to an expected value stands for that value
 // (`resolve`), so moving the value into a variable keeps the shape.
@@ -162,6 +162,7 @@ function shape(
   text: string,
   language: Language,
   resolve?: (name: string) => string | undefined,
+  constants = new Set<string>(),
 ): Shape {
   const code: string[] = [];
   const values: string[] = [];
@@ -172,7 +173,9 @@ function shape(
       (t) => !/^\/[/*]/.test(t) && !(language === 'python' && t[0] === '#'),
     );
   let title = false;
+  let skip = -1; // the last token of a constant read already
   tokens.forEach((token, i) => {
+    if (i <= skip) return;
     if (title && /^['"`]/.test(token)) {
       title = false;
       return;
@@ -190,14 +193,54 @@ function shape(
       values.push(`-${normalize(token)}`);
     } else if (/^['"`\d[\]{},]/.test(token) || LITERAL_WORDS.has(token)) {
       values.push(normalize(token));
-    } else if (tokens[i - 1] === '.' && CONSTANT.test(token)) {
-      values.push(`c:${token}`);
-    } else if (/^[A-Za-z_$]/.test(token)) code.push(token);
+    } else if (/^[A-Za-z_$]/.test(token)) {
+      // The longest member path from here that is a constant.
+      let end = i;
+      let path = token;
+      let hit = constants.has(path) ? i : -1;
+      while (
+        tokens[end + 1] === '.' &&
+        /^[A-Za-z_$]/.test(tokens[end + 2] ?? '')
+      ) {
+        path += `.${tokens[end + 2]}`;
+        end += 2;
+        if (constants.has(path)) hit = end;
+      }
+      if (tokens[i - 1] !== '.' && hit !== -1 && tokens[hit + 1] !== '(') {
+        const name = tokens.slice(i, hit + 1).join('');
+        // Java's boxed booleans are the literals they hold.
+        const boxed = /(?:^|\.)Boolean\.(TRUE|FALSE)$/.exec(name);
+        values.push(boxed ? (boxed[1] ?? '').toLowerCase() : `c:${name}`);
+        skip = hit;
+      } else code.push(token);
+    }
   });
   return { code: code.join(' '), values };
 }
 
-const CONSTANT = /^[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)*$/;
+// Constants on the expected side of checks (a side with no call, not on the
+// other side): a member whose name starts with a capital (`Status.ACTIVE`,
+// `Color.Red`), or a name in capitals (`MAX_SIZE`). Constants passed to the
+// code under test (`f(MOCK.USER)`) are inputs, not counted.
+function expectedConstants(checks: ValueCheck[]): Set<string> {
+  const constants = (side: string) =>
+    new Set(
+      side
+        .replace(/(['"`])(?:\\.|(?!\1)[^\\])*\1/g, '')
+        .match(
+          /(?<![\w$.])(?:[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*\.[A-Z][\w$]*|[A-Z][A-Z0-9_]+)(?![\w$(])/g,
+        ),
+    );
+  const found = new Set<string>();
+  for (const { sides } of checks) {
+    sides.forEach((side, i) => {
+      if (isCode(side)) return;
+      const other = constants(sides[1 - i] ?? '');
+      for (const c of constants(side)) if (!other.has(c)) found.add(c);
+    });
+  }
+  return found;
+}
 
 // A `-` before token `i` that is a sign, not a subtraction.
 const negative = (tokens: string[], i: number) =>
@@ -284,6 +327,7 @@ export const tg008: Rule = ({
     );
   const boundBefore = bound(before.lines, beforeLines);
   const boundAfter = bound(after.lines, afterLines);
+  const constants = expectedConstants([...before.checks, ...after.checks]);
   // A statement's shape, its names bound to expected values resolved.
   const shapeOf = (
     s: Statement,
@@ -295,6 +339,7 @@ export const tg008: Rule = ({
       source.slice(s.start - 1, s.end).join('\n'),
       language,
       s.declares ? undefined : (name) => value(name, s.start),
+      constants,
     );
   };
   const old = touched(statements(before.lines, language, boundBefore), deleted);
@@ -333,7 +378,9 @@ export const tg008: Rule = ({
     const oldShape = shapeOf(match, beforeLines, boundBefore);
     if (same(oldShape.values, newShape.values)) continue;
     const rows = (lines: string[]) =>
-      lines.map((l) => shape(l, language).values).filter((v) => v.length > 0);
+      lines
+        .map((l) => shape(l, language, undefined, constants).values)
+        .filter((v) => v.length > 0);
     if (
       onlyAdded(
         oldShape.values,
