@@ -18,19 +18,18 @@ export interface Declaration {
 }
 
 // The last line of the statement starting at line index `i`, by brackets
-// on comment/string-stripped lines.
+// on comment/string-stripped lines, however long; `i` itself when its
+// brackets never close.
 export function statementEnd(stripped: string[], i: number): number {
   let depth = 0;
-  let last = i;
-  for (let j = i; j < stripped.length && j < i + 200; j++) {
+  for (let j = i; j < stripped.length; j++) {
     for (const ch of stripped[j] ?? '') {
       if ('([{'.includes(ch)) depth++;
       else if (')]}'.includes(ch)) depth--;
     }
-    last = j;
-    if (depth <= 0) break;
+    if (depth <= 0) return j;
   }
-  return last;
+  return i;
 }
 
 // Declarations in the file, found on stripped lines; values are read from

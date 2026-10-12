@@ -2421,3 +2421,34 @@ describe('M11d leftovers: false positives found in real history (gson 9a492d7b55
     ).toEqual([]);
   });
 });
+
+describe('Codex adversarial review: long assertions', () => {
+  const run = (rule: 'TG007' | 'TG008', from: string[], to: string[]) =>
+    compareFiles(
+      { before: file('a.test.js', ...from), after: file('a.test.js', ...to) },
+      { ...ctx, implementationChanged: false },
+      [rule],
+    ).map(({ message }) => message);
+  const long = (n: number, at: number, value: string) => [
+    "test('a', () => {",
+    '  expect(build()).toEqual({',
+    ...Array.from(
+      { length: n },
+      (_, i) => `    k${i}: ${i === at ? value : i},`,
+    ),
+    '  });',
+    '});',
+  ];
+
+  it('TG007 sees a loose matcher far below the start of the assertion', () => {
+    expect(
+      run('TG007', long(60, 50, '50'), long(60, 50, 'expect.anything()')),
+    ).toEqual([expect.stringContaining('weakened assertion')]);
+  });
+
+  it('TG008 sees a value changed far below the start of the assertion', () => {
+    expect(run('TG008', long(300, 250, '250'), long(300, 250, '251'))).toEqual([
+      expect.stringContaining('changed asserted values'),
+    ]);
+  });
+});

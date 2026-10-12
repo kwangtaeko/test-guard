@@ -60,7 +60,7 @@
   and Java `assertInstanceOf`. These count only in place of an exact
   matcher in the same change, since new tests use them too. An assertion
   is judged as a whole, so Prettier or Black wrapping it doesn't hide or
-  fake a weakening. TG008: a flipped sign (`-1` → `1`) and another
+  fake a weakening, however long it is. TG008: a flipped sign (`-1` → `1`) and another
   constant on the expected side (`Status.ACTIVE`, `Status.Active`, `MAX`)
   count as changed values; constants passed to the code under test don't.
 - TG007: an expected value replaced with the value under test, so the

@@ -4,7 +4,7 @@ import {
   type ValueCheck,
 } from '../languages/index.js';
 import type { Language } from '../types.js';
-import { declarations, statementEnd, valueAt } from './declarations.js';
+import { declarations, valueAt } from './declarations.js';
 import type { Rule, RuleFinding } from './types.js';
 
 // Assertion weakening (0.1: matcher swaps only, ROADMAP §3.4).
@@ -189,34 +189,52 @@ interface Hit {
   label: string;
 }
 
-// Which lines of a file hold an assertion, worked out once per file.
-const ASSERTIONS = new WeakMap<string[], boolean[]>();
+// For each line, the [first, last] lines (1-based) of the assertion it is
+// in, worked out once per file. An assertion runs over the lines its
+// brackets span, however long (Prettier and Black wrap them); one whose
+// brackets never close is its first line alone.
+const SPANS = new WeakMap<string[], ([number, number] | undefined)[]>();
 
-// The text of the assertion a line belongs to, over the lines its brackets
-// span (Prettier and Black wrap them), and its first line; the line alone
-// when it isn't in one.
+function spans(
+  lines: string[],
+  language: Language,
+): ([number, number] | undefined)[] {
+  const cached = SPANS.get(lines);
+  if (cached) return cached;
+  const found: ([number, number] | undefined)[] = [];
+  for (let i = 0; i < lines.length; i++) {
+    if (!isAssertionLine(language, lines[i] ?? '')) continue;
+    let depth = 0;
+    let last = -1;
+    for (let j = i; j < lines.length && last === -1; j++) {
+      for (const ch of lines[j] ?? '') {
+        if ('([{'.includes(ch)) depth++;
+        else if (')]}'.includes(ch)) depth--;
+      }
+      if (depth <= 0) last = j;
+    }
+    if (last === -1) last = i;
+    for (let k = i; k <= last; k++) found[k] = [i + 1, last + 1];
+    i = last;
+  }
+  SPANS.set(lines, found);
+  return found;
+}
+
+// The text of the assertion a line belongs to and its first line; the line
+// alone when it isn't in one.
 function statementAt(
   lines: string[],
   line: number,
   language: Language,
 ): { start: number; text: string } {
-  let assertions = ASSERTIONS.get(lines);
-  if (!assertions) {
-    assertions = lines.map((l) => isAssertionLine(language, l));
-    ASSERTIONS.set(lines, assertions);
-  }
-  let found = { start: line, text: lines[line - 1] ?? '' };
-  for (let start = line; start >= Math.max(1, line - 30); start--) {
-    if (!assertions[start - 1]) continue;
-    const end = statementEnd(lines, start - 1) + 1;
-    if (end < line) continue;
-    const text = lines
-      .slice(start - 1, end)
-      .map((l) => l.trim())
-      .join(' ');
-    found = { start, text };
-  }
-  return found;
+  const span = spans(lines, language)[line - 1];
+  if (!span) return { start: line, text: lines[line - 1] ?? '' };
+  const text = lines
+    .slice(span[0] - 1, span[1])
+    .map((l) => l.trim())
+    .join(' ');
+  return { start: span[0], text };
 }
 
 // One hit per assertion, at the first of `lineNumbers` in it.
