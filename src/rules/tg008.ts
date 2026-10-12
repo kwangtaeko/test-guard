@@ -152,7 +152,9 @@ interface Shape {
 }
 
 // Brackets and commas shape a value (`[[1, 2], [3]]` vs `[[1, 2, 3]]`);
-// other punctuation, such as an operator, is left to TG007. A test title
+// other punctuation, such as an operator, is left to TG007. A sign is part
+// of the number it stands before (`-1`), and a constant named in capitals
+// (`Status.ACTIVE`, `Color.RED`) is a value. A test title
 // (`it('…', …)` on the same line), comments and a trailing comma aren't
 // values. A name bound to an expected value stands for that value
 // (`resolve`), so moving the value into a variable keeps the shape.
@@ -184,12 +186,22 @@ function shape(
       const inner = shape(value, language);
       code.push(...(inner.code ? [inner.code] : []));
       values.push(...inner.values);
+    } else if (/^\d/.test(token) && negative(tokens, i)) {
+      values.push(`-${normalize(token)}`);
     } else if (/^['"`\d[\]{},]/.test(token) || LITERAL_WORDS.has(token)) {
       values.push(normalize(token));
+    } else if (tokens[i - 1] === '.' && CONSTANT.test(token)) {
+      values.push(`c:${token}`);
     } else if (/^[A-Za-z_$]/.test(token)) code.push(token);
   });
   return { code: code.join(' '), values };
 }
+
+const CONSTANT = /^[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)*$/;
+
+// A `-` before token `i` that is a sign, not a subtraction.
+const negative = (tokens: string[], i: number) =>
+  tokens[i - 1] === '-' && !/^[\w$'"`)\]}]/.test(tokens[i - 2] ?? '');
 
 const same = (a: string[], b: string[]) =>
   a.length === b.length && a.every((x, i) => x === b[i]);

@@ -2149,3 +2149,92 @@ describe('TG006: agent hooks turned off by renaming "hooks"', () => {
     ).toEqual(["removed test-guard's hooks from the agent settings"]);
   });
 });
+
+describe('M11d leftovers: signs, constants, partial and loose matchers', () => {
+  const run = (
+    rule: 'TG007' | 'TG008',
+    path: string,
+    from: string,
+    to: string,
+  ) =>
+    compareFiles(
+      {
+        before: file(path, ...from.split('\n')),
+        after: file(path, ...to.split('\n')),
+      },
+      { ...ctx, implementationChanged: false },
+      [rule],
+    ).map(({ message }) => message);
+
+  it.each([
+    [
+      'a sign flipped',
+      'expect(cmp(1, 2)).toBe(-1);',
+      'expect(cmp(1, 2)).toBe(1);',
+    ],
+    [
+      'another constant',
+      'expect(status(u)).toBe(Status.ACTIVE);',
+      'expect(status(u)).toBe(Status.INACTIVE);',
+    ],
+  ])('TG008 reports %s', (_, from, to) => {
+    expect(run('TG008', 'a.test.ts', from, to)).toEqual([
+      expect.stringContaining('changed asserted values'),
+    ]);
+  });
+
+  it.each([
+    [
+      'a subtraction kept',
+      'expect(f(a - 1)).toBe(2);',
+      'expect(f(a - 1)).toBe(2); // ok',
+    ],
+    [
+      'a method renamed',
+      'expect(s.isActive()).toBe(true);',
+      'expect(s.isEnabled()).toBe(true);',
+    ],
+  ])('TG008 leaves %s', (_, from, to) => {
+    expect(run('TG008', 'a.test.ts', from, to)).toEqual([]);
+  });
+
+  it.each([
+    [
+      'a.test.js',
+      "expect(user()).toEqual({ id: 1, name: 'a' });",
+      'expect(user()).toMatchObject({ id: 1 });',
+      'toMatchObject',
+    ],
+    [
+      'a.test.js',
+      'expect(user()).toEqual({ id: 1 });',
+      'expect(user()).toEqual(expect.anything());',
+      'expect.anything()',
+    ],
+    [
+      'test_a.py',
+      'assert area(2) == pytest.approx(12.566)',
+      'assert area(2) == pytest.approx(12.566, abs=100)',
+      'pytest.approx(y, abs/rel=…)',
+    ],
+  ])('TG007 reports %s: %s', (path, from, to, label) => {
+    expect(run('TG007', path, from, to)).toEqual([
+      expect.stringContaining(label),
+    ]);
+  });
+
+  it.each([
+    [
+      'test_a.py',
+      'assert total() == 0.3',
+      'assert total() == pytest.approx(0.3)',
+    ],
+    [
+      'a.test.js',
+      'expect(n).toEqual(expect.any(Number));',
+      'expect(m).toEqual(expect.any(Number));',
+    ],
+  ])('TG007 leaves %s: %s', (path, from, to) => {
+    expect(run('TG007', path, from, to)).toEqual([]);
+  });
+});

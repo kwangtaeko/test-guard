@@ -26,7 +26,7 @@ const SPECS: Record<Language, Spec> = {
   js: {
     strong: [
       {
-        re: /(?<!\.not)\.(?:toBe|toEqual|toStrictEqual|toHaveLength)\s*\(/,
+        re: /(?<!\.not)\.(?:toBe|toEqual|toStrictEqual|toHaveLength)\s*\((?!\s*expect\.(?:anything|any|objectContaining|arrayContaining)\s*\()/,
         group: 'value',
       },
       { re: /\.toThrow\s*\(\s*[^\s)]/, group: 'throw', label: 'toThrow(X)' },
@@ -35,6 +35,14 @@ const SPECS: Record<Language, Spec> = {
       {
         re: /\.(?:toBeDefined|toBeTruthy|not\.toBeNull|not\.toBeUndefined)\s*\(/,
         group: 'value',
+      },
+      // Part of the value (`toMatchObject`, `expect.objectContaining`), or
+      // any value of a type (`expect.any(Number)`, `expect.anything()`).
+      { re: /\.toMatchObject\s*\(/, group: 'value' },
+      {
+        re: /\.(?:toBe|toEqual|toStrictEqual)\s*\(\s*expect\.(?:anything|any|objectContaining|arrayContaining)\s*\(/,
+        group: 'value',
+        label: 'expect.anything() / any() / objectContaining()',
       },
       // An exact value replaced by "anything but" or a range.
       {
@@ -53,7 +61,7 @@ const SPECS: Record<Language, Spec> = {
     strong: [
       { re: /(?<![\w.])self\.assertEquals?\s*\(/, group: 'value' },
       {
-        re: /(?<![\w.])assert(?=[\s(]).*==/,
+        re: /(?<![\w.])assert(?=[\s(])(?!.*\bapprox\s*\(.*\b(?:abs|rel)\s*=).*==/,
         group: 'value',
         label: 'assert x == y',
       },
@@ -74,6 +82,12 @@ const SPECS: Record<Language, Spec> = {
         re: /(?<![\w.])assert(?=[\s(])(?!.*(?:==|!=|<|>|\bin\b|\bis\b(?!\s+not\b)))(?!.*\(\s*$)/,
         group: 'value',
         label: 'assert x',
+      },
+      // A tolerance given to an exact comparison.
+      {
+        re: /(?<![\w.])assert(?=[\s(]).*==.*\bapprox\s*\(.*\b(?:abs|rel)\s*=/,
+        group: 'value',
+        label: 'assert x == pytest.approx(y, abs/rel=…)',
       },
       {
         re: /(?<![\w.])assert(?=[\s(])(?!.*==).*!=/,

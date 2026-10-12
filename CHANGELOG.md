@@ -51,6 +51,11 @@
   system settings, `~/.gemini/trustedFolders.json`, and
   `GEMINI_CLI_TRUST_WORKSPACE=false` and similar written to `.env`. Built from Gemini CLI's source (v0.63.0),
   not yet tried in a live session (docs/agents/gemini.md).
+- TG007: `toEqual` → `toMatchObject`, a concrete value → `expect.anything()`
+  / `expect.any()` / `expect.objectContaining()`, and a tolerance added to an
+  exact Python comparison (`== pytest.approx(y, abs=…)`) are reported as
+  weakened. TG008: a flipped sign (`-1` → `1`) and another capitalized
+  constant (`Status.ACTIVE` → `Status.INACTIVE`) count as changed values.
 - TG007: an expected value replaced with the value under test, so the
   check compares a value with itself (`expect(add(1, 2)).toBe(3)` →
   `.toBe(add(1, 2))`, `assert total(c) == total(c)`,
