@@ -34,7 +34,7 @@ interface AgentSpec {
 const SPECS: Record<Agent, AgentSpec> = {
   'claude-code': {
     file: ['.claude', 'settings.json'],
-    preToolUseMatcher: 'Edit|Write|Bash|PowerShell',
+    preToolUseMatcher: 'Edit|Write|Delete|Bash|PowerShell',
     // A local install runs `node` directly: npx costs ~1 s per call.
     handler: (arg, local) =>
       local

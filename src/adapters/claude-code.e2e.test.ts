@@ -292,7 +292,7 @@ describe('cli', () => {
     );
     expect(settings.model).toBe('opus');
     expect(settings.hooks.PreToolUse[0]).toEqual({
-      matcher: 'Edit|Write|Bash|PowerShell',
+      matcher: 'Edit|Write|Delete|Bash|PowerShell',
       hooks: [
         {
           type: 'command',
@@ -476,6 +476,116 @@ describe('Claude Code hooks run by other agents', () => {
       );
     expect(stop(0).decision).toBe('block');
     expect(stop(1).decision).toBeUndefined();
+  });
+
+  describe('red-team re-check', () => {
+    it("denies deleting a test with Cursor's Delete tool", () => {
+      setup();
+      const out = JSON.parse(
+        cursor({
+          hook_event_name: 'preToolUse',
+          tool_name: 'Delete',
+          tool_input: { file_path: join(repo.dir, 'a.test.js') },
+        }),
+      );
+      expect(out.permission).toBe('deny');
+      expect(out.agent_message).toContain('TG001');
+    });
+
+    // On Windows the path reads /C:/…; elsewhere it is the path as it is.
+    it('reads a Cursor file path written as /c:/…', () => {
+      setup();
+      const file = join(repo.dir, 'a.test.js').replace(/\\/g, '/');
+      const file_path = /^[A-Za-z]:/.test(file) ? `/${file}` : file;
+      expect(
+        JSON.parse(
+          cursor({
+            hook_event_name: 'preToolUse',
+            tool_name: 'Write',
+            tool_input: { file_path, content: '' },
+          }),
+        ).permission,
+      ).toBe('deny');
+    });
+
+    it("runs Cursor's shell command in the folder it names", () => {
+      setup({ 't/a.test.js': TEST });
+      expect(
+        JSON.parse(
+          cursor({
+            hook_event_name: 'preToolUse',
+            tool_name: 'Shell',
+            cwd: repo.dir,
+            tool_input: { command: 'rm a.test.js', cwd: join(repo.dir, 't') },
+          }),
+        ).agent_message,
+      ).toContain('TG001');
+    });
+
+    it('checks every folder of a multi-root Cursor workspace at Stop', () => {
+      const clean = new Repo();
+      clean.write('b.js', 'b\n');
+      clean.commitAll();
+      try {
+        setup();
+        repo.write('a.test.js', TEST.replace("it('adds'", "it.skip('adds'"));
+        const out = JSON.parse(
+          cursor({
+            hook_event_name: 'stop',
+            status: 'completed',
+            loop_count: 0,
+            workspace_roots: [clean.dir, repo.dir],
+          }),
+        );
+        expect(out.decision).toBe('block');
+        expect(out.reason).toContain('TG004');
+      } finally {
+        clean.cleanup();
+      }
+    });
+
+    it('reads Copilot patch headers in any case, indented or quoted', () => {
+      setup();
+      expect(
+        denied(
+          pre(
+            'Edit',
+            '  *** Begin Patch\n  *** update file: "a.test.js"\n  @@\n  -  expect(add(1, 2)).toBe(3);\n  *** End Patch\n',
+          ),
+        ),
+      ).toContain('cannot tell');
+    });
+
+    it('reads tool arguments sent as JSON text', () => {
+      setup();
+      expect(
+        denied(
+          pre(
+            'Edit',
+            JSON.stringify({
+              path: join(repo.dir, 'a.test.js'),
+              old_str: '.toBe(3)',
+              new_str: '.toBeDefined()',
+            }),
+          ),
+        ),
+      ).toContain('TG007');
+    });
+
+    it('lets a Cursor tool call through when the hook fails', () => {
+      const out = JSON.parse(
+        runClaudeCodeHook(
+          JSON.stringify({
+            cursor_version: '3.22.12',
+            hook_event_name: 'preToolUse',
+            tool_name: 'Write',
+            tool_input: {},
+          }),
+        ),
+      );
+      expect(out.permission).toBe('allow');
+      expect(out.user_message).toContain('test-guard hook error');
+    });
   });
 
   it("reads Cursor's Shell tool", () => {

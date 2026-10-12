@@ -27,7 +27,11 @@
   3.22 session, are read too: a byte order mark, lowercase event names,
   `workspace_roots` in place of `cwd`, `loop_count` at Stop, and Edit sent
   as `Write`; a denied Cursor call answers in Cursor's own fields so its
-  agent, not only the user, sees why.
+  agent, not only the user, sees why. Cursor's `Delete` tool, a shell
+  command's own folder, `/c:/…` paths and every folder of a multi-root
+  workspace at Stop are checked; a hook error lets a Cursor tool call
+  through instead of blocking it. Copilot patch headers are read in any
+  case, indented or quoted, and tool arguments sent as JSON text are read.
 - Probity: `import { testGuard } from 'test-guard/probity'` is a
   [Probity](https://github.com/nizos/probity) rule that runs test-guard's
   edit and shell checks in Probity's process, for Claude Code, Codex and

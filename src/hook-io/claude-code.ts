@@ -8,6 +8,7 @@ export * from './common.js';
 // replace_all }. Returns null when the shape is not as documented.
 export type FileEdit =
   | { kind: 'write'; filePath: string; content: string }
+  | { kind: 'delete'; filePath: string }
   | {
       kind: 'edit';
       filePath: string;
@@ -25,6 +26,8 @@ export function fileEdit(input: PreToolUseInput): FileEdit | null {
   const { toolName, toolInput: t } = input;
   const filePath = t.file_path ?? t.path;
   if (typeof filePath !== 'string') return null;
+  // Cursor's own tool for deleting a file (cursor.com/docs/agent/hooks).
+  if (toolName === 'Delete') return { kind: 'delete', filePath };
   const content = t.content ?? t.file_text;
   if (toolName === 'Write' && typeof content === 'string') {
     return { kind: 'write', filePath, content };
@@ -67,9 +70,19 @@ export function shellCommand(input: PreToolUseInput): string | null {
     : null;
 }
 
+// The folder a shell command runs in when the tool names its own: Cursor's
+// `Shell` gives `cwd` (recorded) or `working_directory` (its docs).
+export function shellDir(input: PreToolUseInput): string | undefined {
+  const { cwd, working_directory } = input.toolInput;
+  if (typeof cwd === 'string') return cwd;
+  return typeof working_directory === 'string' ? working_directory : undefined;
+}
+
 // Cursor follows Claude Code's deny but shows its reason only to the user;
 // in Cursor's own fields the agent gets it too (cursor.com/docs/agent/hooks).
-// Other output, and output for other agents, is left as it is.
+// A hook error before a tool call is answered as an allow, since Cursor
+// blocks on output it doesn't expect there. Other output, and output for
+// other agents, is left as it is.
 export function forCursor(stdin: string, output: string): string {
   if (output === '') return output;
   let input: unknown;
@@ -88,7 +101,18 @@ export function forCursor(stdin: string, output: string): string {
     'hookSpecificOutput' in parsed
       ? (parsed.hookSpecificOutput as Record<string, unknown>)
       : undefined;
-  if (!isCursor || decision?.permissionDecision !== 'deny') return output;
+  if (!isCursor) return output;
+  const message =
+    typeof parsed === 'object' && parsed !== null && 'systemMessage' in parsed
+      ? String(parsed.systemMessage)
+      : undefined;
+  if (
+    message !== undefined &&
+    (input as Record<string, unknown>).hook_event_name === 'preToolUse'
+  ) {
+    return `${JSON.stringify({ permission: 'allow', user_message: message })}\n`;
+  }
+  if (decision?.permissionDecision !== 'deny') return output;
   const reason = String(decision.permissionDecisionReason ?? '');
   return `${JSON.stringify({ permission: 'deny', user_message: reason, agent_message: reason })}\n`;
 }

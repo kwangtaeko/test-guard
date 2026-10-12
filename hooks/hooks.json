@@ -3,7 +3,7 @@
   "hooks": {
     "PreToolUse": [
       {
-        "matcher": "Edit|Write|Bash|PowerShell",
+        "matcher": "Edit|Write|Delete|Bash|PowerShell",
         "hooks": [
           {
             "type": "command",

@@ -60,14 +60,15 @@ export function parseHookInput(text: string): HookInput {
     ) {
       throw new HookInputError('PreToolUse input has no tool_name/tool_input');
     }
+    const object = typeof text === 'string' ? jsonObject(text) : text;
     return {
       event: 'PreToolUse',
       cwd,
       sessionId,
       toolName: raw.tool_name,
-      ...(typeof text === 'string'
-        ? { toolInput: {}, toolText: text }
-        : { toolInput: text }),
+      ...(object === undefined
+        ? { toolInput: {}, toolText: String(text) }
+        : { toolInput: object }),
     };
   }
   if (raw.hook_event_name === 'Stop' || raw.hook_event_name === 'stop') {
@@ -84,6 +85,16 @@ export function parseHookInput(text: string): HookInput {
   throw new HookInputError(
     `unsupported hook event: ${String(raw.hook_event_name)}`,
   );
+}
+
+// Text that holds a JSON object, as tool arguments sent as text may.
+function jsonObject(text: string): Record<string, unknown> | undefined {
+  try {
+    const value: unknown = JSON.parse(text);
+    return isObject(value) ? value : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 // Responses are written to stdout with exit code 0. Allowing is no output.
