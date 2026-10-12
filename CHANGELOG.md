@@ -63,6 +63,9 @@
   fake a weakening, however long it is. TG008: a flipped sign (`-1` → `1`) and another
   constant on the expected side (`Status.ACTIVE`, `Status.Active`, `MAX`)
   count as changed values; constants passed to the code under test don't.
+  An expected value assigned again before the check reads it (`expected =
+  11` under `let expected = 10`, in a `beforeEach`, a second Python
+  assignment) is reported too.
 - TG007: an expected value replaced with the value under test, so the
   check compares a value with itself (`expect(add(1, 2)).toBe(3)` →
   `.toBe(add(1, 2))`, `assert total(c) == total(c)`,

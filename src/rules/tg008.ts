@@ -398,5 +398,65 @@ export const tg008: Rule = ({
       message: `changed asserted values ${NOTE}: \`${brief(oldLines)}\` → \`${brief(newLines)}\``,
     });
   }
+
+  // An expected value bound again over the one a later check reads
+  // (`expected = 11` under `let expected = 10`, in a `beforeEach`, a second
+  // Python assignment): no changed assertion to pair it with.
+  const declared = declarations(after.lines, afterLines, language);
+  const reported = new Set(findings.map((f) => f.line));
+  for (const n of added) {
+    const binding = BINDING.exec(after.lines[n - 1] ?? '');
+    const name = binding?.[1];
+    const value = BINDING.exec(afterLines[n - 1] ?? '')?.[2];
+    if (
+      !name ||
+      value === undefined ||
+      reported.has(n) ||
+      !expected.has(name) ||
+      isCode(value) ||
+      inArguments(after.lines, n) ||
+      !declared.some(
+        (d) =>
+          d.name === name &&
+          d.start < n &&
+          d.scopeEnd >= n &&
+          !added.has(d.start),
+      ) ||
+      !after.checks.some(
+        (c) =>
+          c.start > n &&
+          c.sides.some((s) =>
+            new RegExp(`(?<![\\w$.])${name}(?![\\w$])`).test(s),
+          ),
+      )
+    ) {
+      continue;
+    }
+    findings.push({
+      ruleId: 'TG008',
+      path: afterPath,
+      line: n,
+      message: `assigned the expected value \`${name}\` again ${NOTE}: \`${brief([afterLines[n - 1] ?? ''])}\``,
+    });
+  }
   return findings;
 };
+
+// Whether line `n` starts inside parentheses or square brackets, as a
+// keyword argument does (`f(\n  r=3,\n)`), rather than in a block.
+function inArguments(stripped: string[], n: number): boolean {
+  const open: string[] = [];
+  for (const line of stripped.slice(0, n - 1)) {
+    for (const ch of line) {
+      if ('([{'.includes(ch)) open.push(ch);
+      else if (')]}'.includes(ch)) open.pop();
+    }
+  }
+  const last = open.at(-1);
+  return last === '(' || last === '[';
+}
+
+// A name given a value, with or without a declaration: `expected = 11`,
+// `let expected = 11;`. Group 2 is the value.
+const BINDING =
+  /^\s*(?:(?:const|let|var)\s+)?([A-Za-z_$][\w$]*)\s*=(?![=>])\s*(.*?)\s*;?\s*$/;

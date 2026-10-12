@@ -2452,3 +2452,70 @@ describe('Codex adversarial review: long assertions', () => {
     ]);
   });
 });
+
+describe('TG008: an expected value assigned again', () => {
+  const run = (path: string, from: string[], to: string[]) =>
+    compareFiles(
+      { before: file(path, ...from), after: file(path, ...to) },
+      { ...ctx, implementationChanged: false },
+      ['TG008'],
+    ).map(({ message }) => message);
+  const insert = (lines: string[], at: number, line: string) => [
+    ...lines.slice(0, at),
+    line,
+    ...lines.slice(at),
+  ];
+
+  const js = [
+    "test('a', () => {",
+    '  let expected = 10;',
+    '  expect(add(5, 5)).toBe(expected);',
+    '});',
+  ];
+  const each = [
+    "describe('a', () => {",
+    '  let expected = 10;',
+    '  beforeEach(() => {',
+    '    reset();',
+    '  });',
+    "  test('a', () => {",
+    '    expect(add(5, 5)).toBe(expected);',
+    '  });',
+    '});',
+  ];
+  const py = [
+    'def test_a():',
+    '    expected = 10',
+    '    assert add(5, 5) == expected',
+  ];
+
+  it.each([
+    ['in the test', 'a.test.js', js, 2, '  expected = 11;'],
+    ['in a beforeEach', 'a.test.js', each, 4, '    expected = 11;'],
+    ['by a second Python assignment', 'test_a.py', py, 2, '    expected = 11'],
+  ])('reports one %s', (_, path, lines, at, line) => {
+    expect(run(path, lines, insert(lines, at, line))).toEqual([
+      expect.stringContaining('assigned the expected value `expected` again'),
+    ]);
+  });
+
+  it.each([
+    [
+      'a new test with its own value of the same name',
+      [
+        ...js,
+        "test('b', () => {",
+        '  let expected = 12;',
+        '  expect(add(6, 6)).toBe(expected);',
+        '});',
+      ],
+    ],
+    [
+      'a value assigned after the last check',
+      insert(js, 3, '  expected = 11;'),
+    ],
+    ['a value computed by code', insert(js, 2, '  expected = add(5, 6);')],
+  ])('leaves %s', (_, to) => {
+    expect(run('a.test.js', js, to)).toEqual([]);
+  });
+});
