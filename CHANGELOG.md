@@ -9,13 +9,25 @@
 - TG006: renaming `"hooks"` in agent settings (Claude Code, Codex, Gemini
   CLI), which turns every hook off while the lines that run test-guard stay,
   is reported.
+- Gemini CLI: a `replace` on a relative path that isn't there is judged on
+  the file Gemini edits instead, the one whose path ends like it (so
+  `case.js` can't reach `src/__tests__/case.js` unseen); when several
+  files match, changing any test or guard file among them is denied. A
+  leading `@` without a slash (`@src/…`) is read as Gemini reads it.
 - `install --agent gemini` works on `.gemini/settings.json` with comments:
   the hooks are added as text so the comments stay; when such a file already
   has its own `"hooks"`, it stops and prints the entries to add.
-- Claude Code hooks run by other agents: GitHub Copilot CLI's `edit` /
+- Claude Code hooks run by other agents: GitHub Copilot CLI's `apply_patch`
+  (sent as `Edit` with the patch text as its input, recorded in a live
+  Copilot CLI 1.0.95 session) is read like a Codex patch, and a patch that
+  wouldn't apply as written can't change test or guard files; its `edit` /
   `create` arguments (`path`, `old_str`, `new_str`, `file_text`) and
   Cursor's `Shell` tool are read too, so those agents' edits and commands
-  aren't let through unseen (not yet tried in a live session).
+  aren't let through unseen. Cursor's calls, recorded in a live Cursor
+  3.22 session, are read too: a byte order mark, lowercase event names,
+  `workspace_roots` in place of `cwd`, `loop_count` at Stop, and Edit sent
+  as `Write`; a denied Cursor call answers in Cursor's own fields so its
+  agent, not only the user, sees why.
 - Probity: `import { testGuard } from 'test-guard/probity'` is a
   [Probity](https://github.com/nizos/probity) rule that runs test-guard's
   edit and shell checks in Probity's process, for Claude Code, Codex and

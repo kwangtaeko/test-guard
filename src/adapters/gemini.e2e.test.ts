@@ -601,3 +601,58 @@ describe('Codex adversarial review: install into settings with comments', () => 
     expect(stderr).toContain('test-guard hook gemini pre-tool-use');
   });
 });
+
+// Gemini's replace on a relative path that isn't there edits the one file
+// in the workspace whose path ends like it (pathCorrector.ts).
+describe("Codex adversarial review: Gemini's path correction", () => {
+  const skip = (file_path: string) =>
+    hook('replace', {
+      file_path,
+      old_string: "it('adds'",
+      new_string: "it.skip('adds'",
+    });
+
+  it('judges the file Gemini finds by the end of its path', () => {
+    repo = new Repo();
+    repo.write('src/__tests__/case.js', TEST);
+    repo.write('src/math.js', 'export const add = (a, b) => a - b;\n');
+    repo.commitAll();
+    expect(denied(skip('case.js'))).toContain(
+      'TG004 — added `it.skip` in src/__tests__/case.js:1',
+    );
+    expect(
+      hook('replace', {
+        file_path: 'math.js',
+        old_string: 'a - b',
+        new_string: 'a + b',
+      }),
+    ).toBe('');
+  });
+
+  it('denies when several test files end like the path', () => {
+    repo = new Repo();
+    repo.write('a/__tests__/case.js', TEST);
+    repo.write('b/__tests__/case.js', TEST);
+    repo.commitAll();
+    expect(denied(skip('case.js'))).toContain('cannot tell');
+  });
+
+  it('reads a workspace mention without a slash', () => {
+    setup();
+    expect(denied(skip('@src/math.test.js'))).toContain('TG004');
+    // A new file goes where Gemini puts it, without the `@`.
+    expect(
+      denied(
+        hook('write_file', {
+          file_path: '@src/new.test.js',
+          content: "it.only('b', () => {});\n",
+        }),
+      ),
+    ).toContain('`it.only` in src/new.test.js:1');
+  });
+
+  it('lets through a replace on a missing absolute path, which Gemini fails', () => {
+    setup();
+    expect(skip(join(repo.dir, 'gone/math.test.js'))).toBe('');
+  });
+});

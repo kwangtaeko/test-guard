@@ -27,12 +27,12 @@
 | exit 0 + 일반 텍스트 | PreToolUse/Stop에서는 디버그 로그로만 감 | hooks.md "Exit code 0" |
 
 ## 이 훅을 실행하는 다른 에이전트 (2026-10-11 조사)
-GitHub Copilot CLI와 Cursor도 `.claude/settings.json`의 훅을 실행합니다. 둘 다 실제 세션에서는 아직 확인하지 않았습니다.
+GitHub Copilot CLI와 Cursor도 `.claude/settings.json`의 훅을 실행합니다. 2026-10-12에 둘 다 실제 세션(Windows)의 훅 입력을 기록해 확인했습니다(Copilot CLI 1.0.95, Cursor 3.22.12). 차단 응답을 따르는지는 아직 실제 세션에서 확인하지 않았습니다.
 
 | 에이전트 | 확인한 것 | 출처 | test-guard 대응 |
 |---|---|---|---|
-| Copilot CLI | Claude 형식 훅에 Claude 도구 이름(`Bash`, `Edit` 등)을 넘김. 1.0.30 번들에서는 `tool_input`이 Copilot 자체 인자(`edit { path, old_str, new_str }`, `create { path, file_text }`)를 JSON으로 푼 것 | Copilot CLI changelog("Claude-format hook payloads carry the Claude tool name"), `@github/copilot@1.0.30` `app.js` | Claude 키가 없으면 `path`·`old_str`·`new_str`·`file_text`도 읽음 |
-| Cursor | Claude 설정의 훅을 기본으로 불러오고, matcher에서는 `Bash`→`Shell`, `Edit`→`Write`로 대응시킴. 셸 도구 입력은 `{ command, working_directory }` | cursor.com/docs/reference/third-party-hooks, cursor.com/docs/agent/hooks | `Shell`도 셸 명령으로 읽음. `Write`의 `content`가 파일 전체인지 문서에 없어, 일부만 담겼을 때 삭제로 오판하지 않도록 Cursor 형식 편집은 아직 읽지 않음 |
+| Copilot CLI | Claude 형식 훅에 Claude 도구 이름을 넘기고 `tool_input`은 Copilot 자체 인자 그대로임. 실제 세션(1.0.95): 파일 수정은 `apply_patch`가 `Edit`로 오고 `tool_input`이 패치 문자열 자체(절대 경로, 여러 파일 한 번에), `powershell`은 `Bash`로 오고 `{ command }`, `view`→`Read`, `rg`→`Grep`. Stop은 `stop_reason`·`transcript_path`와 함께 옴. 훅 환경에 `CLAUDE_PROJECT_DIR`가 있음. 1.0.30 번들에는 `edit { path, old_str, new_str }`, `create { path, file_text }`도 있음(모델에 따라 다른 편집 도구를 쓰는 것으로 보임) | 실제 세션 기록(2026-10-12), Copilot CLI changelog, `@github/copilot@1.0.30` `app.js` | 문자열 `tool_input`의 `Edit`는 apply_patch로 풀어 판정. Copilot의 apply_patch 구현이 Codex와 같은지 알 수 없으므로, 패치나 그 일부가 Codex 방식으로 적용되지 않으면 패치가 가리키는 테스트·설정 파일 수정을 막음. `Bash`의 PowerShell 명령은 `PowerShell` 도구와 똑같이 판정. Claude 키가 없으면 `path`·`old_str`·`new_str`·`file_text`도 읽음. 차단 응답을 Copilot이 따르는지는 아직 실제 세션에서 확인하지 않음 |
+| Cursor | Claude 설정의 훅(`.claude/settings.local.json`, `.claude/settings.json`, `~/.claude/settings.json`)을 기본으로 불러오고, matcher에서는 `Bash`→`Shell`, `Edit`→`Write`로 대응시킴. 실제 세션(3.22.12): stdin 앞에 BOM이 붙고 끝은 CRLF, 이벤트 이름은 `preToolUse`·`stop`(소문자), 셸이 아닌 호출에는 `cwd`가 없고 `workspace_roots`(`/c:/Users/…`)만 있음(훅은 프로젝트 루트에서 실행). 파일 쓰기는 `Write { file_path, content }`로 파일 전체 내용(관찰한 모델: grok-4.6). 셸은 `Shell { command, cwd, timeout }`. Stop에는 `stop_hook_active` 대신 `loop_count`·`status`. 한글 등 비ASCII 내용이 `?`로 깨져 들어옴(Windows, 원인 미확인). Claude 형식 응답의 `permissionDecisionReason`은 사용자에게만 보임(`user_message`), Stop의 `decision: "block"`은 후속 메시지로 처리 | 실제 세션 기록(2026-10-12), cursor.com/docs/reference/third-party-hooks, cursor.com/docs/agent/hooks | BOM 제거, 소문자 이벤트, `workspace_roots`로 `cwd` 대체, `loop_count > 0`이면 Stop 재차단 안 함. `Write`의 `content`는 파일 전체로, `old_string`·`new_string`이 있으면 편집으로 판정. 차단 시 Cursor 형식(`permission`, `user_message`, `agent_message`)으로 답해 에이전트도 이유를 받음. 다른 모델이 `// ... existing code ...` 같은 줄임 표시가 든 일부 내용을 `content`로 보내면 삭제로 판정돼 막힐 수 있음(통과가 아니라 차단 쪽 오판). 비ASCII가 깨진 내용은 테스트 이름 등이 달라 보여 판정이 어긋날 수 있음 |
 
 인자 형태를 모르는 편집은 통과하므로 Stop 훅, commit-msg 훅과 CI가 최종 관문입니다.
 

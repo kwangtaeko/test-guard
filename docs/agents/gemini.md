@@ -41,7 +41,7 @@ test-guard는 Gemini 입력의 이벤트 이름만 `PreToolUse`/`Stop`으로 바
 
 test-guard는 1~3번을 그대로 옮겨(`src/adapters/gemini-replace.ts`) Gemini가 쓸 파일과 같은 내용으로 판정합니다. 일치가 한 곳이거나 `allow_multiple`이면 결과가 정해지기 때문입니다. 일치가 여러 곳인데 `allow_multiple`이 없으면 Gemini는 실패시키지 않고 5번(모델 보정)으로 넘기므로, 4·5번과 함께 **결과를 알 수 없는 편집**으로 봅니다. 이런 편집이 테스트·스냅샷·러너 설정·가드 파일에 닿으면 막고, 파일을 다시 읽어 정확한 문자열로 재시도하라고 안내합니다. 구현 파일(TG009 대상)은 막지 않고 AfterAgent 검사에 맡깁니다. 소스 편집이 자주 막히지 않게 하기 위해서입니다.
 
-경로도 Gemini처럼 풉니다: NUL 문자 제거, `file://` URL과 `%` 이스케이프 해석, 그대로는 없는 경로의 `@/` 제거. 없는 파일에 대한 `replace`(기존 문자열이 있는 경우)는 Gemini가 경로 끝이 같은 파일을 찾아 고치므로 결과를 알 수 없는 편집으로 봅니다.
+경로도 Gemini처럼 풉니다: NUL 문자 제거, `file://` URL과 `%` 이스케이프 해석, 그대로는 없는 경로의 앞쪽 `@` 제거(`@/src`, `@src`, `resolveDefensiveToolPath`). 그대로는 없는 상대 경로에 대한 `replace`(기존 문자열이 있는 경우)는 Gemini가 작업 공간에서 이름이 같고 경로 끝이 같은 파일을 하나 찾아 고치고, 여럿이면 실패합니다(`correctPath`, `pathCorrector.ts`, 2026-10-12 main 확인). test-guard는 같은 방식으로 찾되 Gemini보다 넓게(무시 파일·폴더 50개 제한 없이, `.git`·`node_modules` 제외) 찾습니다. 하나면 그 파일에 대한 편집으로 판정하고, 여럿이면 Gemini가 어느 것을 찾을지 알 수 없으므로 그중 테스트·설정 파일 수정을 막습니다. 없는 절대 경로는 Gemini가 실패하므로 통과시킵니다. `--include-directories`로 더한 작업 공간 폴더는 훅 입력에 없어 찾지 않습니다.
 
 ## 자기 보호
 - `.gemini/settings.json`은 훅 파일로 감시합니다(TG006): test-guard 훅 제거·변경, matcher 축소.

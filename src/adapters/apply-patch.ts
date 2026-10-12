@@ -291,12 +291,13 @@ export interface PatchedFile {
 
 // Applies the patch to an in-memory view of the files. Hunks run in order like
 // Codex; when one fails, the earlier hunks may already be on disk, so their
-// changes are still returned. Throws PatchError for patches Codex rejects as a
-// whole.
+// changes are still returned, and `failed` is called. Throws PatchError for
+// patches Codex rejects as a whole.
 export function simulatePatch(
   patch: string,
   cwd: string,
   read: (path: string) => string | null,
+  failed: () => void = () => {},
 ): PatchedFile[] {
   const hunks = parsePatch(patch);
   const original = new Map<string, string | null>();
@@ -319,13 +320,19 @@ export function simulatePatch(
       continue;
     }
     const text = get(path);
-    if (text === null) break; // Codex fails on a missing file
+    if (text === null) {
+      failed(); // Codex fails on a missing file
+      break;
+    }
     if (hunk.kind === 'delete') {
       current.set(path, null);
       continue;
     }
     const next = applyChunks(text, hunk.chunks);
-    if (next === null) break;
+    if (next === null) {
+      failed();
+      break;
+    }
     if (hunk.movePath === undefined) {
       current.set(path, next);
     } else {

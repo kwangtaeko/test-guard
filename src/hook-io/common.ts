@@ -11,6 +11,9 @@ export interface PreToolUseInput {
   sessionId?: string;
   toolName: string;
   toolInput: Record<string, unknown>;
+  // GitHub Copilot CLI sends some tool inputs as plain text, such as an
+  // apply_patch patch; toolInput is then empty.
+  toolText?: string;
 }
 
 export interface StopInput {
@@ -22,38 +25,60 @@ export interface StopInput {
 
 export type HookInput = PreToolUseInput | StopInput;
 
+// Cursor, which runs Claude Code hooks too (3.22, recorded live), starts
+// stdin with a byte order mark, names events `preToolUse` and `stop`, and
+// gives no `cwd` outside shell calls: its `workspace_roots` (`/c:/…` on
+// Windows), where it also starts the hook, stands in for it.
 export function parseHookInput(text: string): HookInput {
   let raw: unknown;
   try {
-    raw = JSON.parse(text);
+    raw = JSON.parse(text.replace(/^\uFEFF/, ''));
   } catch {
     throw new HookInputError('stdin is not valid JSON');
   }
-  if (!isObject(raw) || typeof raw.cwd !== 'string') {
-    throw new HookInputError('stdin JSON has no "cwd"');
-  }
+  if (!isObject(raw)) throw new HookInputError('stdin JSON has no "cwd"');
+  const [root] = Array.isArray(raw.workspace_roots) ? raw.workspace_roots : [];
+  const cwd =
+    typeof raw.cwd === 'string'
+      ? raw.cwd
+      : typeof root === 'string'
+        ? root.replace(/^\/([A-Za-z]:)/, '$1')
+        : undefined;
+  if (cwd === undefined) throw new HookInputError('stdin JSON has no "cwd"');
   const sessionId =
     typeof raw.session_id === 'string' && raw.session_id !== ''
       ? raw.session_id
       : undefined;
-  if (raw.hook_event_name === 'PreToolUse') {
-    if (typeof raw.tool_name !== 'string' || !isObject(raw.tool_input)) {
+  if (
+    raw.hook_event_name === 'PreToolUse' ||
+    raw.hook_event_name === 'preToolUse'
+  ) {
+    const text = raw.tool_input;
+    if (
+      typeof raw.tool_name !== 'string' ||
+      !(isObject(text) || typeof text === 'string')
+    ) {
       throw new HookInputError('PreToolUse input has no tool_name/tool_input');
     }
     return {
       event: 'PreToolUse',
-      cwd: raw.cwd,
+      cwd,
       sessionId,
       toolName: raw.tool_name,
-      toolInput: raw.tool_input,
+      ...(typeof text === 'string'
+        ? { toolInput: {}, toolText: text }
+        : { toolInput: text }),
     };
   }
-  if (raw.hook_event_name === 'Stop') {
+  if (raw.hook_event_name === 'Stop' || raw.hook_event_name === 'stop') {
     return {
       event: 'Stop',
-      cwd: raw.cwd,
+      cwd,
       sessionId,
-      stopHookActive: raw.stop_hook_active === true,
+      // Cursor counts the follow-ups a stop hook has started instead.
+      stopHookActive:
+        raw.stop_hook_active === true ||
+        (typeof raw.loop_count === 'number' && raw.loop_count > 0),
     };
   }
   throw new HookInputError(

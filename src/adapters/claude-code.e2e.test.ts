@@ -19,7 +19,7 @@ function setup(files: Record<string, string> = { 'a.test.js': TEST }): Repo {
   return repo;
 }
 
-function pre(tool_name: string, tool_input: Record<string, unknown>) {
+function pre(tool_name: string, tool_input: Record<string, unknown> | string) {
   return runClaudeCodeHook(
     JSON.stringify({
       hook_event_name: 'PreToolUse',
@@ -349,6 +349,133 @@ describe('Claude Code hooks run by other agents', () => {
         }),
       ),
     ).toContain('TG004');
+  });
+
+  // Copilot CLI 1.0.95, recorded live: apply_patch arrives as `Edit` whose
+  // tool_input is the patch text, with absolute paths.
+  const patch = (...lines: string[]) =>
+    pre('Edit', ['*** Begin Patch', ...lines, '*** End Patch', ''].join('\n'));
+
+  it("reads Copilot CLI's apply_patch text", () => {
+    setup({
+      'a.test.js': TEST,
+      'src/add.js': 'export const add = (a, b) => a - b;\n',
+    });
+    expect(
+      denied(
+        patch(
+          `*** Update File: ${join(repo.dir, 'a.test.js')}`,
+          '@@',
+          " it('adds', () => {",
+          '-  expect(add(1, 2)).toBe(3);',
+          '+  expect(add(1, 2)).toBeDefined();',
+          ' });',
+        ),
+      ),
+    ).toContain('TG007');
+    // The recorded session: fix the source, add a test, add a README.
+    expect(
+      patch(
+        `*** Update File: ${join(repo.dir, 'src/add.js')}`,
+        '@@',
+        '-export const add = (a, b) => a - b;',
+        '+export const add = (a, b) => a + b;',
+        `*** Update File: ${join(repo.dir, 'a.test.js')}`,
+        '@@',
+        '   expect(add(1, 2)).toBe(3);',
+        ' });',
+        "+it('adds zero', () => {",
+        '+  expect(add(1, 0)).toBe(1);',
+        '+});',
+        `*** Add File: ${join(repo.dir, 'README.md')}`,
+        '+Adds numbers.',
+      ),
+    ).toBe('');
+  });
+
+  it("blocks a Copilot CLI patch to a test file that wouldn't apply as written", () => {
+    setup({ 'a.test.js': TEST, 'src/add.js': 'export const add = 1;\n' });
+    const stale = (file: string) =>
+      patch(
+        `*** Update File: ${join(repo.dir, file)}`,
+        '@@',
+        '-  not in the file',
+        '+  anything',
+      );
+    expect(denied(stale('a.test.js'))).toContain(
+      'cannot tell what this edit changes',
+    );
+    expect(stale('src/add.js')).toBe('');
+    expect(
+      denied(
+        pre(
+          'Edit',
+          `*** Begin Patch\n*** Delete File: ${join(repo.dir, 'a.test.js')}\n`,
+        ),
+      ),
+    ).toContain('cannot tell what this edit changes');
+  });
+
+  it('reads PowerShell that Copilot CLI sends as Bash', () => {
+    setup();
+    expect(denied(bash('Remove-Item a.test.js'))).toContain('TG001');
+  });
+
+  // Cursor 3.22, recorded live: a byte order mark, lowercase event names, no
+  // cwd but `workspace_roots` (`/c:/…` on Windows), Edit named Write.
+  const cursor = (fields: Record<string, unknown>) =>
+    runClaudeCodeHook(
+      `\uFEFF${JSON.stringify({
+        conversation_id: 'c',
+        session_id: 'c',
+        cursor_version: '3.22.12',
+        workspace_roots: [
+          repo.dir.replace(/\\/g, '/').replace(/^([A-Za-z]:)/, '/$1'),
+        ],
+        transcript_path: null,
+        ...fields,
+      })}\r\n`,
+    );
+
+  it('reads Cursor edits and tells its agent why they were denied', () => {
+    setup();
+    const out = JSON.parse(
+      cursor({
+        hook_event_name: 'preToolUse',
+        tool_name: 'Write',
+        tool_input: {
+          file_path: join(repo.dir, 'a.test.js'),
+          content: TEST.replace("it('adds'", "it.skip('adds'"),
+        },
+      }),
+    );
+    expect(out.permission).toBe('deny');
+    expect(out.agent_message).toContain('TG004');
+    expect(out.user_message).toBe(out.agent_message);
+    expect(
+      JSON.parse(
+        cursor({
+          hook_event_name: 'preToolUse',
+          tool_name: 'Write',
+          tool_input: {
+            file_path: join(repo.dir, 'a.test.js'),
+            old_string: '.toBe(3)',
+            new_string: '.toBeDefined()',
+          },
+        }),
+      ).agent_message,
+    ).toContain('TG007');
+  });
+
+  it('blocks a Cursor stop once, by its loop count', () => {
+    setup();
+    repo.write('a.test.js', TEST.replace("it('adds'", "it.skip('adds'"));
+    const stop = (loop_count: number) =>
+      JSON.parse(
+        cursor({ hook_event_name: 'stop', status: 'completed', loop_count }),
+      );
+    expect(stop(0).decision).toBe('block');
+    expect(stop(1).decision).toBeUndefined();
   });
 
   it("reads Cursor's Shell tool", () => {
