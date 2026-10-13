@@ -21,6 +21,9 @@ export interface FileChange {
 export interface CompareContext {
   detect: TestFileDetector; // test files, config `exclude` already applied
   excluded(path: string): boolean; // config `exclude`
+  // A test file only by a test runner's own settings (Mocha's `test/*.js`),
+  // not by name or config `include`.
+  runnerOnly?(path: string): boolean;
   // Whether a directory ('' is the root) had files before the change. A new
   // runner config in an existing directory is judged; in a new one (a new
   // package) it is not. Without it, new configs are not judged.
@@ -77,15 +80,30 @@ function toRuleInput(
       (before && runnerConfigKind(before.path) === 'workflow'
         ? 'workflow'
         : null));
+  let beforeAnalysis =
+    before && beforeLang
+      ? analyzeSource(before.path, before.content, beforeLang)
+      : null;
+  let afterAnalysis =
+    after && afterLang
+      ? analyzeSource(after.path, after.content, afterLang)
+      : null;
+  // A file only a runner's settings call a test (`test/setup.js` under
+  // Mocha's `test/*.js`) is one only when it has tests.
+  const hasTests = (a: typeof beforeAnalysis) =>
+    a !== null && (a.stats.tests > 0 || a.stats.skips > 0);
+  if (
+    (before === null || ctx.runnerOnly?.(before.path)) &&
+    (after === null || ctx.runnerOnly?.(after.path)) &&
+    !hasTests(beforeAnalysis) &&
+    !hasTests(afterAnalysis)
+  ) {
+    beforeAnalysis = null;
+    afterAnalysis = null;
+  }
   return {
-    before:
-      before && beforeLang
-        ? analyzeSource(before.path, before.content, beforeLang)
-        : null,
-    after:
-      after && afterLang
-        ? analyzeSource(after.path, after.content, afterLang)
-        : null,
+    before: beforeAnalysis,
+    after: afterAnalysis,
     beforePath: change.before?.path ?? null,
     afterPath: change.after?.path ?? null,
     beforeLines,

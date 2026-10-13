@@ -71,3 +71,34 @@ describe('mochaTestPatterns', () => {
     ).toEqual(['checks/*.{js,cjs,mjs}']);
   });
 });
+
+describe('mochaTestPatterns, red-team re-check', () => {
+  const script = (test: string, devDependencies = { mocha: '1' }) =>
+    patterns({ 'package.json': pkg({ scripts: { test }, devDependencies }) });
+
+  it.each([
+    ["ts-mocha -p tsconfig.json 'tests/**/*.ts'", ['tests/**/*.ts']],
+    ['node_modules/.bin/_mocha tests/unit', ['tests/unit/*.{js,cjs,mjs}']],
+    ['mocha --spec=tests/unit', ['tests/unit/*.{js,cjs,mjs}']],
+    ['nyc --reporter text mocha tests/unit', ['tests/unit/*.{js,cjs,mjs}']],
+    ['env TZ=UTC mocha tests/unit', ['tests/unit/*.{js,cjs,mjs}']],
+    ['dotenv -e .env.test -- mocha tests/unit', ['tests/unit/*.{js,cjs,mjs}']],
+    ['mocha --delay tests/unit', ['tests/unit/*.{js,cjs,mjs}']],
+    ['mocha --extension .ts tests/unit', ['tests/unit/*.{js,cjs,mjs,ts}']],
+    ['mocha .\\tests\\unit', ['tests/unit/*.{js,cjs,mjs}']],
+  ])('reads %s', (test, expected) => {
+    expect(script(test)).toEqual(expected);
+  });
+
+  it('reads a YAML comment and a computed spec', () => {
+    expect(
+      patterns({ '.mocharc.yml': "spec: 'tests/unit/**/*.js' # all units\n" }),
+    ).toEqual(['tests/unit/**/*.js']);
+    expect(
+      patterns({
+        '.mocharc.js':
+          "module.exports = { spec: process.env.SPEC || 'checks/**/*.js' };",
+      }),
+    ).toEqual(['checks/**/*.js']);
+  });
+});

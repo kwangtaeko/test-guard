@@ -1,3 +1,4 @@
+import { mochaTestPatterns } from '../mocha.js';
 import type { RunnerConfig } from '../watched.js';
 import { yamlBlock, yamlBlockRange } from './tg006.js';
 import type { Rule, RuleFinding } from './types.js';
@@ -367,6 +368,16 @@ export const tg005: Rule = ({
       });
     }
   }
+  // Fewer Mocha test files: a spec, `recursive` or extension dropped, the
+  // config deleted, in any script that runs Mocha.
+  const lost = mochaNarrowed(beforePath, afterPath, beforeLines, afterLines);
+  if (lost && path) {
+    findings.push({
+      ruleId: 'TG005',
+      path,
+      message: `narrowed Mocha's test files: \`${lost}\` no longer included`,
+    });
+  }
   if (!runnerConfig || !afterPath) return findings;
   if (!beforePath && !addedToExistingDir) return findings;
   const before: Before = {
@@ -407,3 +418,21 @@ export const tg005: Rule = ({
   }
   return findings;
 };
+
+// A Mocha test file pattern the root `package.json` or `.mocharc.*` gave
+// before the change and not after.
+function mochaNarrowed(
+  beforePath: string | null,
+  afterPath: string | null,
+  beforeLines: string[],
+  afterLines: string[],
+): string | undefined {
+  const name = beforePath ?? '';
+  if (name !== 'package.json' && !/^\.mocharc(?:\.\w+)?$/.test(name)) {
+    return undefined;
+  }
+  const patterns = (path: string | null, lines: string[]) =>
+    mochaTestPatterns((p) => (p === path ? lines.join('\n') : null));
+  const now = new Set(patterns(afterPath, afterLines));
+  return patterns(beforePath, beforeLines).find((p) => !now.has(p));
+}

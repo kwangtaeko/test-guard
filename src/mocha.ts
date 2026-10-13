@@ -15,11 +15,18 @@ const CONFIG_FILES = [
 
 // Options that take a value (`--require x`), so `x` isn't a spec.
 const VALUED =
-  /^(?:-r|--require|-R|--reporter|-O|--reporter-options?|-u|--ui|-t|--timeout|-s|--slow|-g|--grep|-f|--fgrep|--config|--package|--extension|--file|--ignore|--exclude|-n|--node-option|-j|--jobs|--retries|--watch-files|--watch-ignore|--delay|--opts)$/;
+  /^(?:-r|--require|-R|--reporter|-O|--reporter-options?|-u|--ui|-t|--timeout|-s|--slow|-g|--grep|-f|--fgrep|--config|--package|--extension|--file|--ignore|--exclude|-n|--node-option|-j|--jobs|--retries|--watch-files|--watch-ignore|--opts|--loader|--import|--globals|--project)$/;
 
 const GLOB = /[*?{[]/;
+// Mocha and the runners built on it: `mocha`, `_mocha`, `ts-mocha`,
+// `electron-mocha`, `node_modules/mocha/bin/mocha.js`, `mocha@10`.
+const MOCHA =
+  /(?:^|[\\/])(?:_?mocha|ts-mocha|electron-mocha)(?:\.js)?(?:@\S+)?$/;
+// A command that runs another one: `npx`, `nyc`, `cross-env`, `NODE_ENV=x`.
 const RUNNER =
-  /^(?:npx|pnpx|bunx|yarn|pnpm|exec|dlx|nyc|c8|cross-env|[A-Za-z_][\w]*=\S*|-{1,2}[\w-]+(?:=\S*)?)$/;
+  /^(?:npx|pnpx|bunx|yarn|pnpm|npm|bun|nyc|c8|cross-env|env|dotenv|node|ts-node|tsx|[A-Za-z_]\w*=\S*)$/;
+// A spec as a path or glob, not code (`process.env.SPEC || 'x'`).
+const PATH = /^[\w./*{}[\]!?@,+~-]+$/;
 
 export function mochaTestPatterns(
   read: (path: string) => string | null,
@@ -31,15 +38,15 @@ export function mochaTestPatterns(
   } catch {}
   const config = CONFIG_FILES.map(read).find((text) => text !== null) ?? null;
   // Mocha's arguments in each script command that runs it as the command
-  // or through a runner (`npx`, `nyc`, `cross-env NODE_ENV=test`), not
-  // `eslint --plugin mocha`.
+  // or through a runner (`npx`, `nyc --reporter text`, `cross-env A=1`),
+  // not `eslint --plugin mocha`.
   const runs = Object.values(record(pkg.scripts))
     .filter((s): s is string => typeof s === 'string')
     .flatMap((script) => script.split(/&&|\|\||[;|]/))
     .flatMap((command) => {
       const words = command.trim().split(/\s+/);
-      const at = words.findIndex((w) => /(?:^|\/)mocha$/.test(w));
-      return at !== -1 && words.slice(0, at).every((w) => RUNNER.test(w))
+      const at = words.findIndex((w) => MOCHA.test(unquote(w)));
+      return at === 0 || (at > 0 && RUNNER.test(words[0] ?? ''))
         ? [words.slice(at + 1)]
         : [];
     });
@@ -57,13 +64,16 @@ export function mochaTestPatterns(
   for (const words of runs) {
     for (let i = 0; i < words.length; i++) {
       const word = unquote(words[i] ?? '');
-      if (word === '--recursive') recursive = true;
-      else if (word === '--extension') {
-        extensions.add(unquote(words[i + 1] ?? ''));
-      }
-      if (word === '--spec') specs.push(unquote(words[++i] ?? ''));
-      else if (VALUED.test(word)) i++;
-      else if (!word.startsWith('-') && word !== '') specs.push(word);
+      const [option = '', value] = word.split(/=(.*)/);
+      const next = () => value ?? unquote(words[++i] ?? '');
+      if (option === '--recursive') recursive = true;
+      else if (option === '--spec') specs.push(next());
+      else if (option === '--extension') extensions.add(next());
+      // ts-mocha's `-p tsconfig.json`; Mocha's own `-p` is `--parallel`.
+      else if (option === '-p' && /\.json$/.test(words[i + 1] ?? '')) i++;
+      else if (VALUED.test(option)) {
+        if (value === undefined) i++;
+      } else if (!word.startsWith('-') && word !== '') specs.push(word);
     }
   }
   const mocha = record(pkg.mocha);
@@ -75,14 +85,32 @@ export function mochaTestPatterns(
     if (/\brecursive['"]?\s*[:=]\s*true\b/.test(config)) recursive = true;
     for (const e of configValues(config, 'extension')) extensions.add(e);
   }
-  if (specs.length === 0) specs.push('./test');
+  const paths = specs.flatMap(pathsIn);
+  if (paths.length === 0) paths.push('test');
 
-  const ext = [...extensions].filter(Boolean).join(',');
-  return specs.map((spec) => {
-    const path = spec.replace(/^\.\//, '').replace(/\/+$/, '');
-    if (GLOB.test(path) || /\.[cm]?[jt]sx?$/.test(path)) return path;
-    return `${path}/${recursive ? '**/' : ''}*.{${ext}}`;
-  });
+  const ext = [...extensions]
+    .map((e) => e.replace(/^\./, ''))
+    .filter(Boolean)
+    .join(',');
+  return paths.map((path) =>
+    GLOB.test(path) || /\.[cm]?[jt]sx?$/.test(path)
+      ? path
+      : `${path}/${recursive ? '**/' : ''}*.{${ext}}`,
+  );
+}
+
+// The paths in a spec: itself when it is one (`./test/`, `.\test`), or the
+// quoted ones in code (`process.env.SPEC || 'test/**/*.js'`).
+function pathsIn(spec: string): string[] {
+  const clean = (s: string) =>
+    s
+      .replace(/\\/g, '/')
+      .replace(/^(?:\.\/)+/, '')
+      .replace(/\/+$/, '');
+  if (PATH.test(spec.replace(/\\/g, '/'))) return [clean(spec)].filter(Boolean);
+  return [...spec.matchAll(/(['"`])([^'"`]+)\1/g)]
+    .map(([, , s]) => clean(s ?? ''))
+    .filter((s) => s !== '' && PATH.test(s));
 }
 
 function record(value: unknown): Record<string, unknown> {
@@ -101,7 +129,8 @@ function strings(value: unknown): string[] {
 const unquote = (word: string) => word.replace(/^(['"])(.*)\1$/, '$2');
 
 // The strings given to `key` in a `.mocharc` file (JSON, YAML or JS):
-// `"spec": "test/**/*.js"`, `spec: [a, b]`, `spec:\n  - a`.
+// `"spec": "test/**/*.js"`, `spec: [a, b]`, `spec:\n  - a`; YAML comments
+// left out.
 function configValues(text: string, key: string): string[] {
   const at = new RegExp(
     String.raw`(?:^|[\s{,])['"]?${key}['"]?[ \t]*:[ \t]*`,
@@ -117,6 +146,6 @@ function configValues(text: string, key: string): string[] {
   return value
     .replace(/^\[|\]$/g, '')
     .split(/,|\r?\n\s*-\s*/)
-    .map((s) => unquote(s.trim()))
+    .map((s) => unquote(s.replace(/\s+#.*$/, '').trim()))
     .filter(Boolean);
 }

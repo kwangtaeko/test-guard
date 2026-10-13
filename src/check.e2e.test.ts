@@ -331,3 +331,80 @@ describe('Mocha test files outside the default patterns', () => {
     expect(brief((await repo.check('--json')).stdout)).toEqual([]);
   });
 });
+
+describe('Mocha test files, red-team re-check', () => {
+  const setup = (files: Record<string, string>) => {
+    repo = new Repo();
+    for (const [path, content] of Object.entries(files)) {
+      repo.write(path, content);
+    }
+    repo.commitAll();
+    return repo;
+  };
+  const rules = async () =>
+    brief((await repo.check('--json')).stdout).map(({ ruleId }) => ruleId);
+  const APP = "describe('app', () => {\n  it('a', () => {});\n});\n";
+
+  it.each([
+    [
+      'a script other than test',
+      {
+        'package.json': JSON.stringify({
+          scripts: { test: 'npm run unit', unit: 'mocha tests/unit' },
+        }),
+      },
+      'package.json',
+      JSON.stringify({
+        scripts: { test: 'npm run unit', unit: 'mocha tests/none' },
+      }),
+    ],
+    [
+      'the "mocha" key',
+      {
+        'package.json': JSON.stringify({
+          mocha: { spec: 'checks' },
+          devDependencies: { mocha: '1' },
+        }),
+      },
+      'package.json',
+      JSON.stringify({
+        mocha: { spec: 'nothing' },
+        devDependencies: { mocha: '1' },
+      }),
+    ],
+    [
+      'recursive turned off',
+      { '.mocharc.json': '{\n  "recursive": true\n}\n' },
+      '.mocharc.json',
+      '{\n  "recursive": false\n}\n',
+    ],
+  ])('reports narrowing through %s', async (_, files, path, content) => {
+    setup(files);
+    repo.write(path, content);
+    expect(await rules()).toContain('TG005');
+  });
+
+  it('reports a deleted .mocharc', async () => {
+    setup({ '.mocharc.json': '{ "spec": "checks" }\n', 'checks/app.js': APP });
+    repo.git('rm', '-q', '.mocharc.json');
+    expect(await rules()).toContain('TG005');
+  });
+
+  it('leaves helpers without tests in the test directory', async () => {
+    setup({
+      'package.json': JSON.stringify({
+        scripts: { test: 'mocha --require test/setup.js' },
+      }),
+      'test/setup.js': "process.env.NODE_ENV = 'test';\n",
+      'test/.eslintrc.js': 'module.exports = {};\n',
+      'test/helpers.js':
+        'exports.a = (x) => assert.equal(x, 1);\nexports.b = (x) => assert.ok(x);\n',
+      'test/app.js': APP,
+    });
+    repo.git('rm', '-q', 'test/setup.js', 'test/.eslintrc.js');
+    repo.write('test/helpers.js', 'exports.a = (x) => assert.equal(x, 1);\n');
+    expect(await rules()).toEqual([]);
+    repo.git('rm', '-q', 'test/app.js');
+    expect(await rules()).toEqual(['TG001']);
+  });
+});

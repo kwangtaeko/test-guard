@@ -116,7 +116,7 @@ const SPECS: Record<Language, Spec> = {
     trivial: [
       /(?<![\w$.])expect\s*\(\s*(true|false|null|undefined|\d+)\s*\)\s*\.(?:toBe|toEqual|toStrictEqual)\s*\(\s*\1\s*\)/,
       /(?<![\w$.])expect\s*\(\s*true\s*\)\s*\.toBeTruthy\s*\(\s*\)/,
-      /(?<![\w$.])assert(?:\.ok)?\s*\(\s*true\s*\)/,
+      /(?<![\w$.])assert(?:\.ok)?\s*\(\s*true\s*[,)]/,
     ],
   },
   python: {
@@ -186,7 +186,7 @@ const SPECS: Record<Language, Spec> = {
     ],
     trivial: [
       /(?<![\w.])assert\s*\(?\s*True\s*\)?\s*(?:,|$)/,
-      /(?<![\w.])self\.assertTrue\s*\(\s*True\s*\)/,
+      /(?<![\w.])self\.assertTrue\s*\(\s*True\s*[,)]/,
     ],
   },
   java: {
@@ -247,8 +247,8 @@ const SPECS: Record<Language, Spec> = {
       },
     ],
     trivial: [
-      /(?<![\w$])assertTrue\s*\(\s*true\s*\)/,
-      /(?<![\w$])assertFalse\s*\(\s*false\s*\)/,
+      /(?<![\w$])assertTrue\s*\((?:\s*"(?:\\.|[^"\\])*"\s*,)?\s*true\s*[,)]/,
+      /(?<![\w$])assertFalse\s*\((?:\s*"(?:\\.|[^"\\])*"\s*,)?\s*false\s*[,)]/,
     ],
   },
 };

@@ -82,10 +82,7 @@ export function createContext(
     const enabled = config.languages.includes(language);
     patterns[language] = enabled ? DEFAULT_TEST_PATTERNS[language] : [];
     include[language] = enabled
-      ? [
-          ...config.include.filter((p) => patternLanguage(p) === language),
-          ...(language === 'js' ? runner : []),
-        ]
+      ? config.include.filter((p) => patternLanguage(p) === language)
       : [];
   }
   const match = createTestFileMatcher(patterns, include);
@@ -94,9 +91,22 @@ export function createContext(
       ? picomatch(config.exclude, { dot: true })
       : () => false;
   const excluded = (path: string) => isExcluded(normalizePath(path));
+  // Not dotfiles (`test/.eslintrc.js`), which Mocha doesn't run either.
+  const byRunner =
+    runner.length > 0 && config.languages.includes('js')
+      ? picomatch(runner)
+      : () => false;
+  const runnerOnly = (path: string) => {
+    const normalized = normalizePath(path);
+    return match(normalized) === null && byRunner(normalized);
+  };
   return {
-    detect: (path) => (excluded(path) ? null : match(normalizePath(path))),
+    detect: (path) => {
+      if (excluded(path)) return null;
+      return match(normalizePath(path)) ?? (runnerOnly(path) ? 'js' : null);
+    },
     excluded,
+    runnerOnly,
   };
 }
 

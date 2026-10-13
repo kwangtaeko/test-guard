@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { compareFiles, type FileChange } from '../engine/compare.js';
 import { createTestFileMatcher } from '../paths.js';
-import { RULE_IDS } from './index.js';
+import { RULE_IDS, type RuleId } from './index.js';
 
 const ctx = { detect: createTestFileMatcher(), excluded: () => false };
 
@@ -3405,5 +3405,89 @@ describe('TG008: assertion messages are not expected values', () => {
     expect(run(path, from, to)).toEqual([
       expect.stringContaining('changed asserted values'),
     ]);
+  });
+});
+
+describe('TG008: assertion messages, red-team re-check', () => {
+  const run = (path: string, from: string, to: string, rules = ['TG008']) =>
+    compareFiles(
+      { before: file(path, from), after: file(path, to) },
+      { ...ctx, implementationChanged: false },
+      rules as RuleId[],
+    ).map(({ ruleId }) => ruleId);
+  const java = 'src/test/java/ATest.java';
+
+  it.each([
+    [
+      'a.test.js',
+      "assert(add(1, 2) === 3, 'sum');",
+      'assert(true, add(1, 2) === 3);',
+    ],
+    [
+      'a.test.js',
+      'assert.ok(add(1, 2) === 3);',
+      'assert.ok(true, add(1, 2) === 3);',
+    ],
+    [
+      'test_a.py',
+      'self.assertTrue(add(1, 2) == 3)',
+      'self.assertTrue(True, add(1, 2) == 3)',
+    ],
+  ])(
+    'reports a condition moved into the message slot: %s %s',
+    (path, from, to) => {
+      expect(run(path, from, to, ['TG007', 'TG008'])).not.toEqual([]);
+    },
+  );
+
+  it.each([
+    [
+      java,
+      'assertEquals(3, add(1, 2), "sum of 1 adn 2");',
+      'assertEquals(3, add(1, 2), "sum of 1 and 2");',
+    ],
+    [
+      java,
+      'assertEquals("sum of 1 adn 2", 3, add(1, 2));',
+      'assertEquals("sum of 1 and 2", 3, add(1, 2));',
+    ],
+    [
+      java,
+      'assertTrue(ok(), "shuold be ok");',
+      'assertTrue(ok(), "should be ok");',
+    ],
+    [
+      java,
+      'assertThat("sum of 1 adn 2", add(1, 2), is(3));',
+      'assertThat("sum of 1 and 2", add(1, 2), is(3));',
+    ],
+    [
+      'a.test.js',
+      "assert.include(list, 3, 'shuold contain');",
+      "assert.include(list, 3, 'should contain');",
+    ],
+    [
+      'a.test.js',
+      "assert.lengthOf(list, 3, 'shuold have 3');",
+      "assert.lengthOf(list, 3, 'should have 3');",
+    ],
+    [
+      'test_a.py',
+      'self.assertAlmostEqual(f(), 1.5, places=2, msg="clsoe")',
+      'self.assertAlmostEqual(f(), 1.5, places=2, msg="close")',
+    ],
+  ])('leaves a message typo fixed: %s %s', (path, from, to) => {
+    expect(run(path, from, to)).toEqual([]);
+  });
+
+  it.each([
+    [java, 'assertEquals(1.5, f(), 0.01);', 'assertEquals(1.5, f(), 0.02);'],
+    [
+      java,
+      'assertEquals("abc", f(), "msg");',
+      'assertEquals("abd", f(), "msg");',
+    ],
+  ])('still reports a value: %s %s', (path, from, to) => {
+    expect(run(path, from, to)).toEqual(['TG008']);
   });
 });

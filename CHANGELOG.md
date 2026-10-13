@@ -5,13 +5,21 @@
 - Mocha projects: test files without `.test.` in their names are found from
   Mocha's own settings: the directories and globs the `package.json` scripts
   give `mocha`, `spec` in `.mocharc.*` or `package.json` `"mocha"`, or
-  Mocha's default `test/*.{js,cjs,mjs}`. They are read from the committed
-  version, like `.test-guard.json`. Before this, tests in Mocha's default
-  layout (such as Express's) weren't checked at all; the false-positive
-  table in the README is measured again with them.
+  Mocha's default `test/*.{js,cjs,mjs}`; `ts-mocha`, `_mocha`, runners in
+  front (`nyc --reporter text`, `cross-env`, `dotenv --`) and `--spec=x`
+  are read. They are read from the committed version, like
+  `.test-guard.json`, and a file found only this way counts when it has
+  tests (`test/setup.js` doesn't). TG005 reports a change that narrows them
+  (a spec, `recursive` or extension dropped, `.mocharc` deleted, in any
+  script that runs Mocha). Before this, tests in Mocha's default layout
+  (such as Express's) weren't checked at all; the false-positive table in
+  the README is measured again with them.
 - TG008: a failure message (`assert.equal(a, b, 'msg')`, `assert x == y,
-  "msg"`, `msg=`, AssertJ `.as("msg")`, Truth `assertWithMessage("msg")`)
-  isn't an expected value, so fixing a typo in one isn't reported.
+  "msg"`, `msg=`, JUnit's message, Hamcrest's reason, AssertJ `.as("msg")`,
+  Truth `assertWithMessage("msg")`) isn't an expected value, so fixing a
+  typo in one isn't reported. Only a string counts as a message, so a
+  condition moved there (`assert(true, add(1, 2) === 3)`) is still reported,
+  and TG007 reports `assert(true, …)` as meaningless.
 
 - TG003: assertions in a method nothing calls don't count either: a method
   of a local class or of an object bound to a name (`class Checks {

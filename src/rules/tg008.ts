@@ -566,62 +566,105 @@ export const tg008: Rule = ({
   return findings;
 };
 
-// Calls whose arguments from `from` on are failure messages, not values.
-const MESSAGES: Record<Language, { re: RegExp; from: number }[]> = {
+// A failure message: a string, f-string or template literal (or one joined
+// with `+`), never a condition moved into the message's place.
+const isMessage = (arg: string) => /^\s*(?:[rRbBuUfF]{1,2})?['"`]/.test(arg);
+
+type Pick = (args: string[]) => number[];
+// Arguments from `n` on that are messages.
+const after =
+  (n: number): Pick =>
+  (args) =>
+    args.flatMap((a, i) => (i >= n && isMessage(a) ? [i] : []));
+// JUnit's message: first (JUnit 4) or last (JUnit 5), when there are more
+// than `n` arguments and only one of the two is a string.
+const ends =
+  (n: number): Pick =>
+  (args) => {
+    if (args.length <= n) return [];
+    const first = isMessage(args[0] ?? '');
+    const last = isMessage(args.at(-1) ?? '');
+    if (first === last) return [];
+    return [first ? 0 : args.length - 1];
+  };
+
+// Calls with failure messages among their arguments.
+const MESSAGES: Record<Language, { re: RegExp; pick: Pick }[]> = {
   js: [
     {
-      re: /(?<![\w$])(?:[\w$]+\.)?assert\.(?:equal|notEqual|strictEqual|notStrictEqual|deepEqual|notDeepEqual|deepStrictEqual|notDeepStrictEqual)\s*\(/g,
-      from: 2,
+      re: /(?<![\w$])(?:[\w$]+\.)?assert\.(?:equal|notEqual|strictEqual|notStrictEqual|deepEqual|notDeepEqual|deepStrictEqual|notDeepStrictEqual|include|notInclude|deepInclude|lengthOf|typeOf|instanceOf|match|isAbove|isBelow|isAtLeast|isAtMost|sameMembers)\s*\(/g,
+      pick: after(2),
     },
     {
-      re: /(?<![\w$.])(?:[\w$]+\.)?assert(?:\.(?:ok|isOk|isTrue|isFalse))?\s*\(/g,
-      from: 1,
+      re: /(?<![\w$.])(?:[\w$]+\.)?assert(?:\.(?:ok|isOk|isTrue|isFalse|exists|isNull|isNotNull))?\s*\(/g,
+      pick: after(1),
     },
-    { re: /(?<![\w$.])expect\s*\(/g, from: 1 },
+    { re: /(?<![\w$.])expect\s*\(/g, pick: after(1) },
   ],
   python: [
     {
       re: /(?<![\w.])self\.assert(?:Equals?|NotEqual|Is|IsNot|In|NotIn|Greater|GreaterEqual|Less|LessEqual|CountEqual|ListEqual|DictEqual|TupleEqual|SetEqual|MultiLineEqual|SequenceEqual|IsInstance|NotIsInstance|Regex|NotRegex)\s*\(/g,
-      from: 2,
+      pick: after(2),
     },
     {
       re: /(?<![\w.])self\.assert(?:True|False|IsNone|IsNotNone)\s*\(/g,
-      from: 1,
+      pick: after(1),
+    },
+    {
+      re: /(?<![\w.])self\.assert\w*\s*\(/g,
+      pick: (args) =>
+        args.flatMap((a, i) => (/^\s*msg\s*=/.test(a) ? [i] : [])),
     },
   ],
   java: [
     {
       re: /\.(?:as|describedAs|withFailMessage|overridingErrorMessage)\s*\(|(?<![\w$])assertWithMessage\s*\(/g,
-      from: 0,
+      pick: (args) => args.map((_, i) => i),
+    },
+    {
+      re: /(?<![\w$.])assert(?:Equals|NotEquals|Same|NotSame|ArrayEquals|IterableEquals|LinesMatch)\s*\(/g,
+      pick: ends(2),
+    },
+    {
+      re: /(?<![\w$.])assert(?:True|False|Null|NotNull)\s*\(/g,
+      pick: ends(1),
+    },
+    // Hamcrest's reason: `assertThat("reason", actual, matcher)`.
+    {
+      re: /(?<![\w$.])assertThat\s*\(/g,
+      pick: (args) =>
+        args.length === 3 && isMessage(args[0] ?? '') ? [0] : [],
     },
   ],
 };
 
 // An assertion without its failure messages (`assert.equal(a, b, 'msg')`,
-// `assert x == y, "msg"`, `msg=`, AssertJ `.as("msg")`): fixing a typo in
-// one changes no expected value.
+// `assert x == y, "msg"`, `msg=`, AssertJ `.as("msg")`, JUnit's message):
+// fixing a typo in one changes no expected value.
 function withoutMessages(text: string, language: Language): string {
-  const cuts: [number, number][] = [];
-  for (const { re, from } of MESSAGES[language]) {
+  const cuts = new Map<string, [number, number]>();
+  const cut = (start: number, end: number) =>
+    cuts.set(`${start}:${end}`, [start, end]);
+  for (const { re, pick } of MESSAGES[language]) {
     for (const match of text.matchAll(re)) {
       const args = callArgs(text, match.index + match[0].length);
       if (!args) continue;
-      args.forEach(([start, end], i) => {
-        const keyword = /^\s*msg\s*=/.test(text.slice(start, end));
-        if (i >= from || (language === 'python' && keyword)) {
-          cuts.push([i === 0 ? start : (args[i - 1]?.[1] ?? start), end]);
-        }
-      });
+      for (const i of pick(args.map(([s, e]) => text.slice(s, e)))) {
+        const [start, end] = args[i] ?? [0, 0];
+        cut(i === 0 ? start : (args[i - 1]?.[1] ?? start), end);
+      }
     }
   }
-  // `assert x == y, "msg"`: everything after the first top-level comma.
+  // `assert x == y, "msg"`: a message after the first top-level comma.
   const statement = /^\s*assert\b/.exec(text);
   if (language === 'python' && statement) {
     const comma = topLevel(text, statement[0].length, ',');
-    if (comma !== -1) cuts.push([comma, text.length]);
+    if (comma !== -1 && isMessage(text.slice(comma + 1))) {
+      cut(comma, text.length);
+    }
   }
   let result = text;
-  for (const [start, end] of cuts.sort((a, b) => b[0] - a[0])) {
+  for (const [start, end] of [...cuts.values()].sort((a, b) => b[0] - a[0])) {
     result = result.slice(0, start) + result.slice(end);
   }
   return result;
