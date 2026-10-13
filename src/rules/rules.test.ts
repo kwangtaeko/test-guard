@@ -2825,15 +2825,17 @@ describe('TG008: expected values given again in other forms', () => {
 
 describe('TG007: chai, node:assert, jest-extended, AssertJ and Hamcrest', () => {
   const run = (path: string, from: string, to: string) =>
-    compareFiles(
-      { before: file(path, from), after: file(path, to) },
-      ctx,
-      ['TG007'],
-    ).map(({ message }) => message);
+    compareFiles({ before: file(path, from), after: file(path, to) }, ctx, [
+      'TG007',
+    ]).map(({ message }) => message);
   const java = 'src/test/java/ATest.java';
 
   it.each([
-    ['a.test.js', 'expect(add(1, 2)).to.equal(3);', 'expect(add(1, 2)).to.be.ok;'],
+    [
+      'a.test.js',
+      'expect(add(1, 2)).to.equal(3);',
+      'expect(add(1, 2)).to.be.ok;',
+    ],
     [
       'a.test.js',
       'expect(r).to.deep.equal({ a: 1 });',
@@ -2857,7 +2859,11 @@ describe('TG007: chai, node:assert, jest-extended, AssertJ and Hamcrest', () => 
       'assert.notStrictEqual(add(1, 2), 0);',
     ],
     ['a.test.js', 'assert.equal(add(1, 2), 3);', 'assert(add(1, 2));'],
-    ['a.test.js', 'expect(add(1, 2)).toBe(3);', 'expect(add(1, 2)).toBeNumber();'],
+    [
+      'a.test.js',
+      'expect(add(1, 2)).toBe(3);',
+      'expect(add(1, 2)).toBeNumber();',
+    ],
     [
       java,
       'assertThat(add(1, 2)).isEqualTo(3);',
@@ -2868,7 +2874,11 @@ describe('TG007: chai, node:assert, jest-extended, AssertJ and Hamcrest', () => 
       'assertThat(list).containsExactly(1, 2);',
       'assertThat(list).contains(1);',
     ],
-    [java, 'assertEquals(3, add(1, 2));', 'assertThat(add(1, 2)).isPositive();'],
+    [
+      java,
+      'assertEquals(3, add(1, 2));',
+      'assertThat(add(1, 2)).isPositive();',
+    ],
     [
       java,
       'assertThat(add(1, 2), is(3));',
@@ -2886,17 +2896,9 @@ describe('TG007: chai, node:assert, jest-extended, AssertJ and Hamcrest', () => 
   });
 
   it.each([
-    [
-      'a.test.js',
-      'expect(r).to.deep.equal(x);',
-      'expect(r).to.eql(x);',
-    ],
+    ['a.test.js', 'expect(r).to.deep.equal(x);', 'expect(r).to.eql(x);'],
     ['a.test.js', 'assert.equal(a, 1);', 'assert.strictEqual(a, 1);'],
-    [
-      'a.test.js',
-      'expect(a).to.not.equal(1);',
-      'expect(a).to.be.ok;',
-    ],
+    ['a.test.js', 'expect(a).to.not.equal(1);', 'expect(a).to.be.ok;'],
     [java, 'assertThat(r).isEqualTo(x);', 'assertThat(r).containsExactly(x);'],
     [java, 'assertThat(r).isNotEqualTo(x);', 'assertThat(r).isNotNull();'],
     [java, 'assertThat(r, equalTo(x));', 'assertThat(r).isEqualTo(x);'],
@@ -2937,6 +2939,262 @@ describe('TG007: a large file diffed as one hunk', () => {
         ctx,
         ['TG007'],
       ).filter(({ message }) => message.includes('→')),
+    ).toEqual([]);
+  });
+});
+
+describe('TG008: expected values given again in other forms, red-team re-check', () => {
+  const run = (path: string, from: string[], to: string[]) =>
+    compareFiles(
+      { before: file(path, ...from), after: file(path, ...to) },
+      { ...ctx, implementationChanged: false },
+      ['TG008'],
+    ).map(({ message }) => message);
+  const inTest = (first: string, ...lines: string[]) => [
+    "test('a', () => {",
+    `  let expected = ${first};`,
+    ...lines.map((l) => `  ${l}`),
+    '  expect(add(5, 5)).toEqual(expected);',
+    '});',
+  ];
+  const oneCheck = (line: string) => ["test('a', () => {", `  ${line}`, '});'];
+  const twoLines = (first: string, second: string) => [
+    "test('a', () => {",
+    `  ${first}`,
+    `  ${second}`,
+    '});',
+  ];
+  const unit = (setUp: string[], test: string[], extra: string[] = []) => [
+    'class TestA(unittest.TestCase):',
+    '    def setUp(self):',
+    ...setUp.map((l) => `        ${l}`),
+    ...extra,
+    '',
+    '    def test_a(self):',
+    ...test.map((l) => `        ${l}`),
+  ];
+  const check = ['self.assertEqual(add(5, 5), self.expected)'];
+  const fixture = (
+    decorator: string,
+    def: string,
+    body: string,
+    use: string[],
+  ) => [
+    decorator,
+    `${def}:`,
+    `    ${body}`,
+    '',
+    'def test_a(value):',
+    ...use.map((l) => `    ${l}`),
+  ];
+  const py = (...lines: string[]) => [
+    'def test_a():',
+    ...lines.map((l) => `    ${l}`),
+  ];
+
+  it.each([
+    ['a.test.js', inTest('10'), inTest('Number("11")')],
+    [
+      'a.test.js',
+      oneCheck('expect(add(5, 5)).toBe(10);'),
+      oneCheck('expect(add(5, 5)).toBe(Number("11"));'),
+    ],
+    [
+      'a.test.ts',
+      oneCheck('expect(add(5, 5)).toBe(10);'),
+      oneCheck('expect(add(5, 5)).toBe(11 as number);'),
+    ],
+    [
+      'test_a.py',
+      py('assert add(5, 5) == 10'),
+      py('assert add(5, 5) == int("11")'),
+    ],
+    ['a.test.js', inTest('10'), inTest('10', 'expected = parseInt("11", 10);')],
+    [
+      'test_a.py',
+      py('value, expected = 5, 10', 'assert double(value) == expected'),
+      py('value, expected = 5, 11', 'assert double(value) == expected'),
+    ],
+    [
+      'a.test.js',
+      twoLines(
+        'const [value, expected] = [5, 10];',
+        'expect(double(value)).toBe(expected);',
+      ),
+      twoLines(
+        'const [value, expected] = [5, 11];',
+        'expect(double(value)).toBe(expected);',
+      ),
+    ],
+    [
+      'a.test.js',
+      twoLines(
+        'const { expected } = { expected: 10 };',
+        'expect(add(5, 5)).toBe(expected);',
+      ),
+      twoLines(
+        'const { expected } = { expected: 11 };',
+        'expect(add(5, 5)).toBe(expected);',
+      ),
+    ],
+    [
+      'test_a.py',
+      unit(['self.expected, self.other = 10, 0'], check),
+      unit(['self.expected, self.other = 11, 0'], check),
+    ],
+    [
+      'test_a.py',
+      unit(['self.expected = 10'], check),
+      unit(['self.expected = 10'], check, [
+        '',
+        '    @pytest.fixture(autouse=True)',
+        '    def _prepare(self):',
+        '        self.expected = 11',
+      ]),
+    ],
+    [
+      'test_a.py',
+      fixture('@pytest_asyncio.fixture', 'async def value()', 'return 10', [
+        'assert add(5, 5) == value',
+      ]),
+      fixture('@pytest_asyncio.fixture', 'async def value()', 'return 11', [
+        'assert add(5, 5) == value',
+      ]),
+    ],
+    [
+      'test_a.py',
+      py('expected = 10', 'assert add(5, 5) == expected'),
+      py(
+        'expected = 10',
+        'expected = 11  # add(5, 5)',
+        'assert add(5, 5) == expected',
+      ),
+    ],
+    [
+      'a.test.js',
+      inTest('{ total: 10 }'),
+      inTest('{ total: 10 }', 'expected.total++;'),
+    ],
+    ['a.test.js', inTest('[1, 2]'), inTest('[1, 2]', 'expected.push(3);')],
+    [
+      'a.test.js',
+      inTest('{ a: { total: 10 } }'),
+      inTest(
+        '{ a: { total: 10 } }',
+        'Object.assign(expected.a, { total: 11 });',
+      ),
+    ],
+  ])('reports %s %#', (path, from, to) => {
+    expect(run(path, from, to)).toHaveLength(1);
+  });
+
+  const fixtureUse = (body: string, use: string[]) =>
+    fixture('@pytest.fixture', 'def value()', body, use);
+  const post = [
+    'resp = self.client.post("/users", json=self.payload)',
+    'self.assertEqual(resp.json()["name"], self.payload["name"])',
+  ];
+  const postFixture = [
+    'resp = client.post("/users", json=value)',
+    'assert resp.json()["name"] == value["name"]',
+  ];
+  const unpack = [
+    'user = User(**self.data)',
+    'self.assertEqual(user.name, self.data["name"])',
+  ];
+  const fString = [
+    'resp = client.get(f"/users/{value}")',
+    'assert resp.json()["id"] == value',
+  ];
+  const loop = [
+    'for n in value:',
+    '    reg.add(n)',
+    'assert sorted(reg.all()) == value',
+  ];
+  const store = [
+    'self.store[1] = self.item',
+    'self.assertEqual(self.store.get(1), self.item)',
+  ];
+  it.each([
+    [
+      'a setUp payload sent as a keyword argument',
+      unit(['self.payload = {"name": "bob"}'], post),
+      unit(['self.payload = {"name": "bob", "age": 3}'], post),
+    ],
+    [
+      'a fixture sent as a keyword argument',
+      fixtureUse('return {"name": "bob"}', postFixture),
+      fixtureUse('return {"name": "alice"}', postFixture),
+    ],
+    [
+      'a setUp dict unpacked',
+      unit(['self.data = {"name": "bob", "age": 3}'], unpack),
+      unit(['self.data = {"name": "bob", "age": 30}'], unpack),
+    ],
+    [
+      'a fixture in an f-string',
+      fixtureUse('return 1', fString),
+      fixtureUse('return 42', fString),
+    ],
+    [
+      'a fixture iterated',
+      fixtureUse('return ["a", "b"]', loop),
+      fixtureUse('return ["a", "b", "c"]', loop),
+    ],
+    [
+      'a setUp item stored',
+      unit(['self.item = {"id": 1}'], store),
+      unit(['self.item = {"id": 1, "name": "a"}'], store),
+    ],
+  ])('leaves %s', (_, from, to) => {
+    expect(run('test_a.py', from, to)).toEqual([]);
+  });
+
+  it('leaves Object.assign on an input spread into a request', () => {
+    const user = (...lines: string[]) => [
+      "test('a', async () => {",
+      "  const user = { name: 'bob' };",
+      ...lines.map((l) => `  ${l}`),
+      "  const res = await request(app).post('/users').send({ ...user });",
+      '  expect(res.body).toMatchObject(user);',
+      '});',
+    ];
+    expect(
+      run('a.test.js', user(), user("Object.assign(user, { role: 'admin' });")),
+    ).toEqual([]);
+  });
+});
+
+describe('TG007: large files and helper methods named assert…', () => {
+  const path = 'src/test/java/ATest.java';
+  const run = (from: string[], to: string[]) =>
+    compareFiles(
+      { before: file(path, ...from), after: file(path, ...to) },
+      ctx,
+      ['TG007'],
+    ).filter(({ message }) => message.includes('→'));
+
+  it('pairs only nearby lines in a file too large for a full diff', () => {
+    const lines = Array.from({ length: 2500 }, (_, i) => `int c${i} = ${i};`);
+    const from = [...lines];
+    from.splice(100, 0, 'assertEquals(3, f());');
+    from.splice(2400, 0, 'assertTrue(g(1));');
+    const to = [...lines];
+    to.splice(2399, 0, 'assertTrue(g(2));');
+    expect(run(from, to)).toEqual([]);
+  });
+
+  it('leaves a helper method named assert… whose signature changed', () => {
+    const helper = (signature: string) => [
+      `  private static void assertNotANumber(String s)${signature} {`,
+      '    assertThat(s).contains("a");',
+      '  }',
+    ];
+    expect(
+      run(
+        ['  void a() {', '    assertEquals(1, x);', ...helper(''), '  }'],
+        ['  void a() {', ...helper(' throws IOException'), '  }'],
+      ),
     ).toEqual([]);
   });
 });

@@ -48,6 +48,7 @@ function statements(
   stripped: string[],
   language: Language,
   bound: Declaration[],
+  expected: Set<string>,
 ): Statement[] {
   const found: Statement[] = [];
   for (let i = 0; i < stripped.length; i++) {
@@ -65,17 +66,44 @@ function statements(
   for (const d of bound) {
     found.push({ start: d.start, end: d.end, inline: false, declares: d.name });
   }
+  // Several names bound at once: `value, expected = 5, 10`,
+  // `const [value, expected] = [5, 10]`, `const { expected } = {…}`.
+  stripped.forEach((line, i) => {
+    const names = UNPACK[language]?.exec(line);
+    const name = names?.[1]
+      ?.split(',')
+      .map((n) => n.trim())
+      .find((n) => expected.has(n));
+    if (!names || !name) return;
+    const end = statementEnd(stripped, i);
+    const value = stripped
+      .slice(i, end + 1)
+      .join('\n')
+      .slice(names[0].length);
+    if (!isCode(value)) {
+      found.push({ start: i + 1, end: end + 1, inline: false, declares: name });
+    }
+  });
   return found;
 }
+
+const UNPACK: Partial<Record<Language, RegExp>> = {
+  js: /^\s*(?:const|let|var)\s+[[{]\s*([\w$]+(?:\s*,\s*[\w$]+)*)\s*,?\s*[\]}]\s*=(?![=>])/,
+  python:
+    /^\s*\(?\s*((?:self\.)?\w+(?:\s*,\s*(?:self\.)?\w+)+)\s*,?\s*\)?\s*=(?!=)/,
+};
 
 // Code rather than a value: a call, a function. Constructors of plain
 // values (`List.of(1, 2)`, `new Set([1])`, `Decimal("1.5")`) are values.
 const CALL = /[\w$\]>)]\s*\(|=>|\bfunction\b|\blambda\b/;
 const VALUE_OF =
   /(?:\bnew\s*(?:Set|Map|Date|BigDecimal|BigInteger)|\b(?:List|Set|Map)\.of(?:Entries)?|\bArrays\.asList|(?<![\w$.])(?:datetime\.)?(?:datetime|date|time|timedelta|Decimal|Fraction|dict|list|set|tuple|frozenset))\s*\(/g;
-// A literal converted to its own type: `Number("11")`, `int("11")`.
+// A literal converted to its own type: `Number("11")`, `int("11")`,
+// `parseInt("11", 10)`, `Integer.parseInt("11")`.
 const WRAPPED =
-  /(?<![\w$.])(?:Number|String|BigInt|Boolean|parseInt|parseFloat|int|float|str|bool|(?:Integer|Long|Double)\.valueOf)\s*\(\s*(-?\s*(?:'(?:\\.|[^'\\])*'|"(?:\\.|[^"\\])*"|\d[\w.]*))\s*\)/g;
+  /(?<![\w$.])(?:(?:Number\.)?(?:parseInt|parseFloat)|Number|String|BigInt|Boolean|int|float|str|bool|(?:Integer|Long|Double)\.valueOf|Integer\.parseInt|Long\.parseLong|Double\.parseDouble)\s*\(\s*(-?\s*(?:'(?:\\.|[^'\\])*'|"(?:\\.|[^"\\])*"|`[^`$\\]*`|\d[\w.]*))(?:\s*,\s*\d+)?\s*\)/g;
+// A TypeScript cast: `11 as number`, `[1] as const`.
+const CAST = /\s+as\s+(?:const\b|[A-Za-z_$][\w$.]*(?:<[^>]*>)?(?:\[\])*)/g;
 const isCode = (text: string) =>
   CALL.test(text.replace(WRAPPED, '$1').replace(VALUE_OF, '('));
 
@@ -109,10 +137,28 @@ function expectedNames(checks: ValueCheck[]): Set<string> {
   return found;
 }
 
-// Names passed to code outside the checks (`gson.fromJson(json, …)`): inputs
-// of the code under test, even when a check also compares with them. Not
-// function parameters, logging, or arguments inside checks and tables.
-function inputNames(stripped: string[], language: Language): Set<string> {
+// Names passed to code outside the checks (`gson.fromJson(json, …)`,
+// `post(json=payload)`, `User(**data)`, `send({ ...user })`, `for n in names`,
+// `store[1] = item`, `f"/users/{id}"`): inputs of the code under test, even
+// when a check also compares with them. Not function parameters, logging, or
+// arguments inside checks and tables.
+const NAME = String.raw`((?:self\.)?[A-Za-z_$][\w$]*)`;
+const INPUT = new RegExp(
+  [
+    String.raw`[(,]\s*(?:[A-Za-z_]\w*\s*=\s*)?${NAME}\s*(?=[,)])`,
+    String.raw`[(,{[]\s*(?:\.\.\.|\*\*?)\s*${NAME}`,
+    String.raw`\$\{\s*${NAME}`,
+    String.raw`\bfor\b.*\b(?:in|of)\s+${NAME}`,
+    String.raw`^\s*(?!self\.[\w$]+\s*=)[\w$]+(?:\[[^\]]*\]|\.[\w$]+)+\s*=\s*${NAME}\s*;?\s*$`,
+  ].join('|'),
+  'g',
+);
+
+function inputNames(
+  stripped: string[],
+  source: string[],
+  language: Language,
+): Set<string> {
   const names = new Set<string>();
   for (let i = 0; i < stripped.length; i++) {
     const line = stripped[i] ?? '';
@@ -131,10 +177,15 @@ function inputNames(stripped: string[], language: Language): Set<string> {
     ) {
       continue;
     }
-    for (const [, name] of line.matchAll(
-      /[(,]\s*((?:self\.)?[A-Za-z_$][\w$]*)\s*(?=[,)])/g,
-    )) {
-      if (name) names.add(name);
+    for (const match of line.matchAll(INPUT)) {
+      for (const name of match.slice(1)) if (name) names.add(name);
+    }
+    // Python f-strings, whose contents are blanked in `stripped`.
+    const text = source[i] ?? '';
+    if (language === 'python' && /\b[fF][rR]?['"]/.test(text)) {
+      for (const [, name] of text.matchAll(/\{\s*((?:self\.)?[A-Za-z_]\w*)/g)) {
+        if (name) names.add(name);
+      }
     }
   }
   return names;
@@ -161,7 +212,9 @@ interface Shape {
 // (`constants`: `Status.ACTIVE`, `Color.Red`, `MAX`) is a value. A test title
 // (`it('…', …)` on the same line), comments and a trailing comma aren't
 // values. A name bound to an expected value stands for that value
-// (`resolve`), so moving the value into a variable keeps the shape.
+// (`resolve`), so moving the value into a variable keeps the shape. A
+// literal converted to its own type (`Number("11")`) or cast (`11 as
+// number`) is that literal.
 function shape(
   text: string,
   language: Language,
@@ -170,7 +223,10 @@ function shape(
 ): Shape {
   const code: string[] = [];
   const values: string[] = [];
-  const tokens = [...text.matchAll(TOKEN)]
+  const plain = text.replace(WRAPPED, '$1');
+  const tokens = [
+    ...(language === 'js' ? plain.replace(CAST, '') : plain).matchAll(TOKEN),
+  ]
     .map(([token]) => token)
     // Comments; `#` starts one only in Python.
     .filter(
@@ -329,8 +385,8 @@ export const tg008: Rule = ({
     });
   const expected = expectedNames([...before.checks, ...after.checks]);
   for (const name of [
-    ...inputNames(before.lines, language),
-    ...inputNames(after.lines, language),
+    ...inputNames(before.lines, beforeLines, language),
+    ...inputNames(after.lines, afterLines, language),
   ]) {
     expected.delete(name);
   }
@@ -355,10 +411,13 @@ export const tg008: Rule = ({
       constants,
     );
   };
-  const old = touched(statements(before.lines, language, boundBefore), deleted);
+  const old = touched(
+    statements(before.lines, language, boundBefore, expected),
+    deleted,
+  );
   const findings: RuleFinding[] = [];
   for (const statement of touched(
-    statements(after.lines, language, boundAfter),
+    statements(after.lines, language, boundAfter, expected),
     added,
   )) {
     const newLines = afterLines.slice(statement.start - 1, statement.end);
@@ -424,7 +483,6 @@ export const tg008: Rule = ({
     if (reported.has(n) || inArguments(after.lines, n)) continue;
     for (const { name, value, offset } of bindings(
       after.lines[n - 1] ?? '',
-      afterLines[n - 1] ?? '',
       language,
     )) {
       if (!expected.has(name) || (value !== null && !isLiteral(value))) {
@@ -457,10 +515,11 @@ export const tg008: Rule = ({
         (language === 'python' &&
           enclosingDef(after.lines, n) !==
             enclosingDef(after.lines, check.start) &&
-          // An attribute is shared from `setUp` with the tests.
+          // An attribute is shared with the tests from `setUp` and other
+          // methods that aren't tests.
           !(
             name.startsWith('self.') &&
-            /^set_?up/i.test(enclosingDef(after.lines, n) ?? '')
+            !/^test/.test(enclosingDef(after.lines, n) ?? 'test')
           ))
       ) {
         continue;
@@ -479,7 +538,7 @@ export const tg008: Rule = ({
   // A pytest fixture giving an expected value (`return 11` in `def
   // expected()`) that a check already there reads.
   for (const n of language === 'python' ? added : []) {
-    const value = /^\s*(?:return|yield)\s+(.+)$/.exec(afterLines[n - 1] ?? '');
+    const value = /^\s*(?:return|yield)\s+(.+)$/.exec(after.lines[n - 1] ?? '');
     const name = enclosingDef(after.lines, n);
     if (
       reported.has(n) ||
@@ -514,7 +573,7 @@ function fixture(stripped: string[], name: string): boolean {
   );
   for (let k = def - 1; k >= 0; k--) {
     const line = (stripped[k] ?? '').trim();
-    if (/^@(?:pytest\.)?fixture\b/.test(line)) return true;
+    if (/^@(?:pytest(?:_asyncio)?\.)?fixture\b/.test(line)) return true;
     if (!line.startsWith('@')) return false;
   }
   return false;
@@ -525,11 +584,11 @@ function fixture(stripped: string[], name: string): boolean {
 // expected = 11`), changed in place (`+= 1`, `++`, value null) or through
 // a member (`expected.total = 11`, `expected[0] = 11`,
 // `Object.assign(expected, …)`), several at once (`a, b = 11, 2`), or a
-// Python attribute (`self.expected = 11`). The value is read from
-// `source`; `offset` is where the statement starts.
+// Python attribute (`self.expected = 11`), or by a call with values
+// (`expected.push(3)`). The value is read with comments and string contents
+// blanked; `offset` is where the statement starts.
 function bindings(
   stripped: string,
-  source: string,
   language: Language,
 ): { name: string; value: string | null; offset: number }[] {
   const found: { name: string; value: string | null; offset: number }[] = [];
@@ -540,7 +599,7 @@ function bindings(
     const at = stripped.indexOf(part, offset);
     offset = at + part.length;
     const rest = (end: number) =>
-      source
+      stripped
         .slice(at + end, at + part.length)
         .trim()
         .replace(/;$/, '');
@@ -568,11 +627,9 @@ function bindings(
       }
       continue;
     }
-    const assign = /^\s*Object\.assign\s*\(\s*([A-Za-z_$][\w$]*)\s*,/.exec(
-      part,
-    );
-    if (assign?.[1]) {
-      found.push({ name: assign[1], value: null, offset: at });
+    const changed = ASSIGN.exec(part) ?? MUTATE.exec(part);
+    if (changed?.[1] && !isCode(changed[2] ?? '')) {
+      found.push({ name: changed[1], value: null, offset: at });
       continue;
     }
     const step = STEP.exec(part);
@@ -585,9 +642,20 @@ function bindings(
 const SET =
   /^\s*(?:if\s*\(.*\)\s*)?(?:(?:const|let|var)\s+)?([A-Za-z_$][\w$]*)((?:\.[\w$]+|\[[^\]]*\])*)\s*(?::[^=]*)?([-+*/%]?=)(?![=>])/;
 const TUPLE =
-  /^\s*[[(]?\s*([A-Za-z_$][\w$]*(?:\s*,\s*[A-Za-z_$][\w$]*)+)\s*,?\s*[\])]?\s*=(?![=>])/;
-const STEP =
-  /^\s*(?:(?:\+\+|--)([A-Za-z_$][\w$]*)|([A-Za-z_$][\w$]*)(?:\+\+|--))\s*$/;
+  /^\s*[[(]?\s*((?:self\.)?[A-Za-z_$][\w$]*(?:\s*,\s*(?:self\.)?[A-Za-z_$][\w$]*)+)\s*,?\s*[\])]?\s*=(?![=>])/;
+const MEMBERS = String.raw`(?:\.[\w$]+|\[[^\]]*\])*`;
+const TARGET = String.raw`((?:self\.)?[A-Za-z_$][\w$]*)${MEMBERS}`;
+const STEP = new RegExp(
+  String.raw`^\s*(?:(?:\+\+|--)${TARGET}|${TARGET}(?:\+\+|--))\s*$`,
+);
+// `Object.assign(expected.a, …)`; `expected.push(3)`, `self.expected.update(…)`
+// with the values in group 2.
+const ASSIGN = new RegExp(
+  String.raw`^\s*Object\.assign\s*\(\s*${TARGET}\s*,()`,
+);
+const MUTATE = new RegExp(
+  String.raw`^\s*${TARGET}\.(?:push|unshift|splice|update|append|extend|insert|add|set|put|setdefault)\s*\((.*)\)\s*;?\s*$`,
+);
 
 // A value written out: no call, and not just another name (`expected = e`
 // in a loop).

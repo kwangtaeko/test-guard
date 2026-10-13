@@ -67,11 +67,28 @@
   reads it is reported too: `expected = 11` under `let expected = 10` or
   `let expected;`, in a `beforeEach`/`@BeforeEach`, `+= 1`, `++`,
   `expected.total = 11`, after other code on the line, a second Python
-  assignment, `Object.assign(expected, …)`, `a, b = 11, 2`,
-  `[a, b] = [11, 2]`, a value wrapped in `Number("11")`/`int("11")`. Python
-  `self.expected` set in `setUp` counts as an expected value, and so does a
-  pytest fixture a check compares with (`return 11`). Values only new checks
-  read, loop variables and cleanup in `afterEach`/teardown are left alone.
+  assignment, `Object.assign(expected, …)`, `expected.push(3)`,
+  `a, b = 11, 2`, `[a, b] = [11, 2]`. A literal converted to its own type
+  (`Number("11")`, `int("11")`, `parseInt("11", 10)`,
+  `Integer.parseInt("11")`) or cast (`11 as number`) is that literal, and
+  names bound together (`value, expected = 5, 10`,
+  `const { expected } = {…}`) are expected values like single ones. Python
+  `self.expected` set in `setUp` or another method that isn't a test counts
+  as an expected value, and so does a pytest fixture a check compares with
+  (`return 11`, also `pytest_asyncio`). Values only new checks read, loop
+  variables, cleanup in `afterEach`/teardown, and values also passed to the
+  code under test (as keyword arguments, `**`/`...` spread, in f-strings or
+  templates, looped over, or stored) are left alone.
+- TG007 knows more assertion libraries: chai (`.to.deep.equal` →
+  `.to.be.ok`, `.to.not.equal`, `.to.include`, `.to.be.closeTo`),
+  `node:assert` (`assert.strictEqual` → `assert.ok`, `assert(x)`,
+  `assert.notStrictEqual`), jest-extended (`toBeNumber`, `toInclude`…),
+  AssertJ / Truth (`assertThat(x).isEqualTo(y)` → `isNotNull()`,
+  `contains(…)`, `isCloseTo(…)`) and Hamcrest (`assertThat(x, is(y))` →
+  `notNullValue()`). Partial checks count only in place of an exact one.
+- A file too large for a full line diff is split at lines found once on
+  each side, so assertions far apart in a large test file aren't paired; a
+  helper method named `assert…` is no longer read as one long assertion.
 - TG007: an expected value replaced with the value under test, so the
   check compares a value with itself (`expect(add(1, 2)).toBe(3)` →
   `.toBe(add(1, 2))`, `assert total(c) == total(c)`,

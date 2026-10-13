@@ -252,12 +252,16 @@ function spans(
   const found: ([number, number] | undefined)[] = [];
   for (let i = 0; i < lines.length; i++) {
     if (!isAssertionLine(language, lines[i] ?? '')) continue;
+    // Braces outside brackets open a block in JS and Java (a helper method
+    // named `assert…`), but a value in Python (`assert x == {`).
+    const open = language === 'python' ? '([{' : '([';
+    const close = language === 'python' ? ')]}' : ')]';
     let depth = 0;
     let last = -1;
     for (let j = i; j < lines.length && last === -1; j++) {
       for (const ch of lines[j] ?? '') {
-        if ('([{'.includes(ch)) depth++;
-        else if (')]}'.includes(ch)) depth--;
+        if (open.includes(ch)) depth++;
+        else if (close.includes(ch)) depth--;
       }
       if (depth <= 0) last = j;
     }
