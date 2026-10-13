@@ -139,7 +139,7 @@ unittest) and Java (JUnit 4/5).
 
 | Language | Test files (default) |
 |---|---|
-| JS/TS | `*.test.*`, `*.spec.*`, `__tests__/**` (JS/TS extensions) |
+| JS/TS | `*.test.*`, `*.spec.*`, `__tests__/**` (JS/TS extensions); in a Mocha project also its specs (`package.json` test script, `.mocharc.*`, or Mocha's default `test/*.{js,cjs,mjs}`) |
 | Python | `test_*.py`, `*_test.py` |
 | Java | `src/test/**/*Test.java`, `*Tests.java`, `*IT.java` |
 
@@ -308,22 +308,26 @@ samples; details and caveats in [bench/README.md](bench/README.md).
 
 `scripts/fp-history.mjs` runs `test-guard check` on each commit of a
 repository against its parent. On the last 300 commits of four projects
-(2026-10-06):
+(cloned 2026-10-06, measured 2026-10-13):
 
 | Repository | Stack | Commits stopped | Didn't weaken anything |
 |---|---|---|---|
-| expressjs/express | JS, Mocha | 1 (0.3%) | 1 |
+| expressjs/express | JS, Mocha | 26 (8.7%) | 4 |
 | pallets/flask | Python, pytest | 3 (1.0%) | 0 |
 | google/gson | Java, JUnit | 13 (4.3%) | 5 |
 | colinhacks/zod | TS, Vitest | 11 (3.7%) | 2 |
-| **Total** | | **28 / 1,200 (2.3%)** | **8 (0.7%)** |
+| **Total** | | **53 / 1,200 (4.4%)** | **11 (0.9%)** |
 
-20 of the 28 really removed, skipped or weakened tests (a feature dropped, a
-test marked `@Ignore` or `skipif`, `assertThrows(Specific.class)` loosened
-on purpose); people make these changes too, and they pass with one approval.
-The other 8 didn't weaken anything: assertions merged into one, `try/fail`
-moved to `assertThrows`, a test replaced by a new file, a wrapper added to the
-`test` script. None was a wrong reading of the code. To reproduce:
+42 of the 53 really removed, skipped or weakened tests (a feature dropped
+with its tests, as Express 5 removed old signatures, a test marked `@Ignore`,
+`skipif` or `describe.skip`, `assertThrows(Specific.class)` loosened on
+purpose); people make these changes too, and they pass with one approval.
+The other 11 didn't weaken anything: assertions merged into one, `try/fail`
+moved to `assertThrows`, a test replaced by a new file, duplicate tests
+removed, new tests added already skipped, a wrapper added to the `test`
+script. None was a wrong reading of the code. Express's tests (`test/*.js`)
+have no `.test.` in their names; they are found from its Mocha settings. To
+reproduce:
 
 ```bash
 pnpm build

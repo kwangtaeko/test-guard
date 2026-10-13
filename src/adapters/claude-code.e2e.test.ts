@@ -595,3 +595,15 @@ describe('Claude Code hooks run by other agents', () => {
     );
   });
 });
+
+describe('PreToolUse: Mocha test files', () => {
+  it('blocks a skip added to test/*.js in a Mocha project', () => {
+    setup({
+      'package.json': JSON.stringify({ scripts: { test: 'mocha' } }),
+      'test/app.js': TEST,
+    });
+    expect(
+      denied(edit('test/app.js', "it('adds'", "it.skip('adds'")),
+    ).toContain('TG004');
+  });
+});

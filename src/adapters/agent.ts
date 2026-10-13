@@ -37,6 +37,7 @@ import {
   type StopInput,
 } from '../hook-io/common.js';
 import { toLf } from '../languages/index.js';
+import { mochaTestPatterns } from '../mocha.js';
 import { normalizePath } from '../paths.js';
 import type { RuleId } from '../rules/index.js';
 import { hooksTurnedOff } from '../rules/tg006.js';
@@ -490,7 +491,10 @@ function loadContext(root: string): { config: Config; ctx: CompareContext } {
     loaded = {
       config,
       ctx: {
-        ...createContext(config),
+        ...createContext(
+          config,
+          mochaTestPatterns((path) => readBlobIfExists(root, `HEAD:${path}`)),
+        ),
         // Before the tool runs, the disk is the "before" side.
         dirExisted: (dir) => {
           const path = join(root, dir);

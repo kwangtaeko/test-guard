@@ -280,3 +280,54 @@ describe('cli', () => {
     expect(stderr).toContain('not a git repository');
   });
 });
+
+describe('Mocha test files outside the default patterns', () => {
+  const mocha = (scripts: Record<string, string>) => {
+    repo = new Repo();
+    repo.write(
+      'package.json',
+      JSON.stringify({ scripts, devDependencies: { mocha: '^11' } }),
+    );
+    repo.write(
+      'test/app.js',
+      "describe('app', () => {\n  it('a', () => {});\n  it('b', () => {});\n});\n",
+    );
+    repo.write('test/support/utils.js', 'exports.x = 1;\n');
+    repo.commitAll();
+    return repo;
+  };
+
+  it('reads test/*.js as tests when the project runs Mocha', async () => {
+    mocha({ test: 'mocha --require test/support/env --check-leaks test/' });
+    repo.write(
+      'test/app.js',
+      "describe('app', () => {\n  it('a', () => {});\n  it.skip('b', () => {});\n});\n",
+    );
+    expect(brief((await repo.check('--json')).stdout)).toEqual([
+      { ruleId: 'TG004', path: 'test/app.js', line: 3 },
+    ]);
+  });
+
+  it('reads the directories the test script gives', async () => {
+    mocha({ test: 'mocha test/ test/acceptance/' });
+    repo.write('test/acceptance/flow.js', "it('flow', () => {});\n");
+    repo.commitAll();
+    repo.write('test/acceptance/flow.js', "it.skip('flow', () => {});\n");
+    expect(brief((await repo.check('--json')).stdout)).toEqual([
+      { ruleId: 'TG004', path: 'test/acceptance/flow.js', line: 1 },
+    ]);
+  });
+
+  it('leaves helpers below the test directory and projects without Mocha', async () => {
+    mocha({ test: 'mocha' });
+    repo.write('test/support/utils.js', 'exports.x = 2;\n');
+    expect(brief((await repo.check('--json')).stdout)).toEqual([]);
+
+    repo = new Repo();
+    repo.write('package.json', JSON.stringify({ scripts: { test: 'jest' } }));
+    repo.write('test/app.js', "it('a', () => {});\n");
+    repo.commitAll();
+    repo.write('test/app.js', "it.skip('a', () => {});\n");
+    expect(brief((await repo.check('--json')).stdout)).toEqual([]);
+  });
+});

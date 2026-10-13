@@ -70,14 +70,22 @@ export function parseConfig(text: string | null): Config {
   return config;
 }
 
-export function createContext(config: Config): CompareContext {
+// `runner`: test file patterns a test runner's own settings give (Mocha's
+// `test/*.js`), added to the JS ones.
+export function createContext(
+  config: Config,
+  runner: string[] = [],
+): CompareContext {
   const patterns = {} as Record<Language, string[]>;
   const include = {} as Record<Language, string[]>;
   for (const language of LANGUAGES) {
     const enabled = config.languages.includes(language);
     patterns[language] = enabled ? DEFAULT_TEST_PATTERNS[language] : [];
     include[language] = enabled
-      ? config.include.filter((p) => patternLanguage(p) === language)
+      ? [
+          ...config.include.filter((p) => patternLanguage(p) === language),
+          ...(language === 'js' ? runner : []),
+        ]
       : [];
   }
   const match = createTestFileMatcher(patterns, include);

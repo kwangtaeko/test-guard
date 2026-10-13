@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+- Mocha projects: test files without `.test.` in their names are found from
+  Mocha's own settings: the directories and globs the `package.json` scripts
+  give `mocha`, `spec` in `.mocharc.*` or `package.json` `"mocha"`, or
+  Mocha's default `test/*.{js,cjs,mjs}`. They are read from the committed
+  version, like `.test-guard.json`. Before this, tests in Mocha's default
+  layout (such as Express's) weren't checked at all; the false-positive
+  table in the README is measured again with them.
+- TG008: a failure message (`assert.equal(a, b, 'msg')`, `assert x == y,
+  "msg"`, `msg=`, AssertJ `.as("msg")`, Truth `assertWithMessage("msg")`)
+  isn't an expected value, so fixing a typo in one isn't reported.
+
 - TG003: assertions in a method nothing calls don't count either: a method
   of a local class or of an object bound to a name (`class Checks {
   run() { expect(…) } }`), when the class or object isn't exported or passed

@@ -3336,3 +3336,74 @@ describe('TG007: an exact value replaced by a specific exception', () => {
     ).toEqual([]);
   });
 });
+
+describe('TG008: assertion messages are not expected values', () => {
+  const run = (path: string, from: string, to: string) =>
+    compareFiles(
+      { before: file(path, from), after: file(path, to) },
+      { ...ctx, implementationChanged: false },
+      ['TG008'],
+    ).map(({ message }) => message);
+
+  it.each([
+    [
+      'a.test.js',
+      "assert.strictEqual(headers.length, 2, 'should have 2 occurances');",
+      "assert.strictEqual(headers.length, 2, 'should have 2 occurrences');",
+    ],
+    [
+      'a.test.js',
+      "assert(ok(), 'shuold pass');",
+      "assert(ok(), 'should pass');",
+    ],
+    [
+      'a.test.js',
+      "expect(add(1, 2), 'sum of 1 adn 2').to.equal(3);",
+      "expect(add(1, 2), 'sum of 1 and 2').to.equal(3);",
+    ],
+    [
+      'test_a.py',
+      'assert add(1, 2) == 3, "sum of 1 adn 2"',
+      'assert add(1, 2) == 3, "sum of 1 and 2"',
+    ],
+    [
+      'test_a.py',
+      'self.assertEqual(add(1, 2), 3, "sum of 1 adn 2")',
+      'self.assertEqual(add(1, 2), 3, msg="sum of 1 and 2")',
+    ],
+    [
+      'src/test/java/ATest.java',
+      'assertThat(add(1, 2)).as("sum of 1 adn 2").isEqualTo(3);',
+      'assertThat(add(1, 2)).as("sum of 1 and 2").isEqualTo(3);',
+    ],
+    [
+      'src/test/java/ATest.java',
+      'assertWithMessage("sum of 1 adn 2").that(add(1, 2)).isEqualTo(3);',
+      'assertWithMessage("sum of 1 and 2").that(add(1, 2)).isEqualTo(3);',
+    ],
+  ])('leaves a message changed in %s', (path, from, to) => {
+    expect(run(path, from, to)).toEqual([]);
+  });
+
+  it.each([
+    [
+      'a.test.js',
+      "assert.strictEqual(add(1, 2), 3, 'sum');",
+      "assert.strictEqual(add(1, 2), 4, 'sum');",
+    ],
+    [
+      'test_a.py',
+      'assert add(1, 2) == 3, "sum"',
+      'assert add(1, 2) == 4, "sum"',
+    ],
+    [
+      'src/test/java/ATest.java',
+      'assertThat(add(1, 2)).as("sum").isEqualTo(3);',
+      'assertThat(add(1, 2)).as("sum").isEqualTo(4);',
+    ],
+  ])('still reports the value in %s', (path, from, to) => {
+    expect(run(path, from, to)).toEqual([
+      expect.stringContaining('changed asserted values'),
+    ]);
+  });
+});

@@ -4,6 +4,7 @@ import {
   createContext,
   parseConfig,
 } from '../config.js';
+import { mochaTestPatterns } from '../mocha.js';
 import { RULE_IDS, type RuleId } from '../rules/index.js';
 import type { Finding } from '../types.js';
 import {
@@ -52,7 +53,12 @@ export function runCheck(options: CheckOptions): CheckResult {
   );
   let baseDirs: Set<string> | undefined;
   const ctx: CompareContext = {
-    ...createContext(config),
+    ...createContext(
+      config,
+      mochaTestPatterns((path) =>
+        base ? readBlobIfExists(root, `${base}:${path}`) : null,
+      ),
+    ),
     // Only asked when a runner config is added, so the git call is rare.
     dirExisted: (dir) => {
       if (!base) return false;

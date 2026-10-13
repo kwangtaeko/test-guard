@@ -405,7 +405,7 @@ export const tg008: Rule = ({
   ): Shape => {
     const value = valueAt(list);
     return shape(
-      source.slice(s.start - 1, s.end).join('\n'),
+      withoutMessages(source.slice(s.start - 1, s.end).join('\n'), language),
       language,
       s.declares ? undefined : (name) => value(name, s.start),
       constants,
@@ -565,6 +565,115 @@ export const tg008: Rule = ({
   }
   return findings;
 };
+
+// Calls whose arguments from `from` on are failure messages, not values.
+const MESSAGES: Record<Language, { re: RegExp; from: number }[]> = {
+  js: [
+    {
+      re: /(?<![\w$])(?:[\w$]+\.)?assert\.(?:equal|notEqual|strictEqual|notStrictEqual|deepEqual|notDeepEqual|deepStrictEqual|notDeepStrictEqual)\s*\(/g,
+      from: 2,
+    },
+    {
+      re: /(?<![\w$.])(?:[\w$]+\.)?assert(?:\.(?:ok|isOk|isTrue|isFalse))?\s*\(/g,
+      from: 1,
+    },
+    { re: /(?<![\w$.])expect\s*\(/g, from: 1 },
+  ],
+  python: [
+    {
+      re: /(?<![\w.])self\.assert(?:Equals?|NotEqual|Is|IsNot|In|NotIn|Greater|GreaterEqual|Less|LessEqual|CountEqual|ListEqual|DictEqual|TupleEqual|SetEqual|MultiLineEqual|SequenceEqual|IsInstance|NotIsInstance|Regex|NotRegex)\s*\(/g,
+      from: 2,
+    },
+    {
+      re: /(?<![\w.])self\.assert(?:True|False|IsNone|IsNotNone)\s*\(/g,
+      from: 1,
+    },
+  ],
+  java: [
+    {
+      re: /\.(?:as|describedAs|withFailMessage|overridingErrorMessage)\s*\(|(?<![\w$])assertWithMessage\s*\(/g,
+      from: 0,
+    },
+  ],
+};
+
+// An assertion without its failure messages (`assert.equal(a, b, 'msg')`,
+// `assert x == y, "msg"`, `msg=`, AssertJ `.as("msg")`): fixing a typo in
+// one changes no expected value.
+function withoutMessages(text: string, language: Language): string {
+  const cuts: [number, number][] = [];
+  for (const { re, from } of MESSAGES[language]) {
+    for (const match of text.matchAll(re)) {
+      const args = callArgs(text, match.index + match[0].length);
+      if (!args) continue;
+      args.forEach(([start, end], i) => {
+        const keyword = /^\s*msg\s*=/.test(text.slice(start, end));
+        if (i >= from || (language === 'python' && keyword)) {
+          cuts.push([i === 0 ? start : (args[i - 1]?.[1] ?? start), end]);
+        }
+      });
+    }
+  }
+  // `assert x == y, "msg"`: everything after the first top-level comma.
+  const statement = /^\s*assert\b/.exec(text);
+  if (language === 'python' && statement) {
+    const comma = topLevel(text, statement[0].length, ',');
+    if (comma !== -1) cuts.push([comma, text.length]);
+  }
+  let result = text;
+  for (const [start, end] of cuts.sort((a, b) => b[0] - a[0])) {
+    result = result.slice(0, start) + result.slice(end);
+  }
+  return result;
+}
+
+// The [start, end) of each top-level argument of the call whose arguments
+// start at `at` (just after its `(`); null when it never closes.
+function callArgs(text: string, at: number): [number, number][] | null {
+  const args: [number, number][] = [];
+  let start = at;
+  let depth = 0;
+  for (let i = at; i < text.length; i++) {
+    const ch = text[i] ?? '';
+    if (`'"\``.includes(ch)) {
+      i = stringEnd(text, i);
+    } else if ('([{'.includes(ch)) depth++;
+    else if (')]}'.includes(ch)) {
+      if (depth-- === 0) {
+        if (text.slice(start, i).trim() !== '') args.push([start, i]);
+        return args;
+      }
+    } else if (ch === ',' && depth === 0) {
+      args.push([start, i]);
+      start = i + 1;
+    }
+  }
+  return null;
+}
+
+// The index of the first `target` at bracket depth 0 from `at`, outside
+// strings; -1 when there is none.
+function topLevel(text: string, at: number, target: string): number {
+  let depth = 0;
+  for (let i = at; i < text.length; i++) {
+    const ch = text[i] ?? '';
+    if (`'"\``.includes(ch)) i = stringEnd(text, i);
+    else if ('([{'.includes(ch)) depth++;
+    else if (')]}'.includes(ch)) depth--;
+    else if (ch === target && depth === 0) return i;
+  }
+  return -1;
+}
+
+// The index of the quote closing the string that opens at `i`.
+function stringEnd(text: string, i: number): number {
+  const quote = text[i];
+  for (let j = i + 1; j < text.length; j++) {
+    if (text[j] === '\\') j++;
+    else if (text[j] === quote) return j;
+  }
+  return text.length;
+}
 
 // Whether the Python function `name` is a pytest fixture.
 function fixture(stripped: string[], name: string): boolean {
