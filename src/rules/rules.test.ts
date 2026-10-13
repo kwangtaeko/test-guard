@@ -3198,3 +3198,141 @@ describe('TG007: large files and helper methods named assert…', () => {
     ).toEqual([]);
   });
 });
+
+describe('TG007: assertion libraries, red-team re-check', () => {
+  const run = (path: string, from: string, to: string) =>
+    compareFiles(
+      {
+        before: file(path, ...from.split('\n')),
+        after: file(path, ...to.split('\n')),
+      },
+      ctx,
+      ['TG007'],
+    ).map(({ message }) => message);
+  const java = 'src/test/java/ATest.java';
+  const js = 'a.test.js';
+
+  it.each([
+    [
+      java,
+      'assertThat(service.compute(input))\n    .isEqualTo(3);',
+      'assertThat(service.compute(input))\n    .isNotNull();',
+    ],
+    [
+      java,
+      'assertThat(list)\n    .extracting(Foo::getName)\n    .containsExactly("a", "b");',
+      'assertThat(list)\n    .extracting(Foo::getName)\n    .contains("a");',
+    ],
+    [java, 'assertThat(x).isEqualTo(3);', 'assertThat(x)\n    .isNotNull();'],
+    [
+      js,
+      'expect(add(1, 2)).to.equal(3);',
+      'expect(add(1, 2)).not.to.equal(0);',
+    ],
+    [js, 'expect(r).to.equal(3);', 'expect(r).not.to.be.null;'],
+    [js, 'expect(r).to.deep.equal([1, 2]);', 'expect(r).to.not.be.empty;'],
+    [js, 'assert.equal(a, 3);', 'assert.isOk(a);'],
+    [js, 'assert.deepEqual(r, { a: 1 });', 'assert.include(r, { a: 1 });'],
+    [js, 'assert.strictEqual(n, 3);', 'assert.isAbove(n, 0);'],
+    [js, 't.assert.strictEqual(a, 3);', 't.assert.ok(a);'],
+    [
+      js,
+      'assert.deepStrictEqual(r, { a: 1, b: 2 });',
+      'assert.partialDeepStrictEqual(r, { a: 1 });',
+    ],
+    [js, 'expect(n).to.equal(3);', 'expect(n).to.be.greaterThanOrEqual(0);'],
+    [java, 'assertThat(s, is("abc"));', 'assertThat(s, is(startsWith("a")));'],
+    [java, 'assertThat(n, is(3));', 'assertThat(n, is(oneOf(3, 4)));'],
+    [
+      java,
+      'assertWithMessage("r").that(x).isEqualTo(3);',
+      'assertWithMessage("r").that(x).isNotNull();',
+    ],
+    [
+      java,
+      'assertThat(s).isEqualTo("Abc");',
+      'assertThat(s).isEqualToIgnoringCase("abc");',
+    ],
+    [
+      java,
+      'assertThat(list).containsExactly(1, 2, 3);',
+      'assertThat(list).containsOnly(1, 2, 3);',
+    ],
+    [
+      java,
+      'assertThat(list).hasSize(3);',
+      'assertThat(list).hasSizeGreaterThanOrEqualTo(1);',
+    ],
+    [
+      java,
+      'assertThat(user).usingRecursiveComparison().isEqualTo(expected);',
+      'assertThat(user).usingRecursiveComparison().ignoringFields("createdAt").isEqualTo(expected);',
+    ],
+  ])('reports %s: %s → %s', (path, from, to) => {
+    expect(run(path, from, to)).toEqual([
+      expect.stringContaining('weakened assertion'),
+    ]);
+  });
+
+  it.each([
+    [java, 'assertEquals(true, x.isOk());', 'assertThat(x.isOk()).isTrue();'],
+    [java, 'assertThat(x.isOk(), is(true));', 'assertThat(x.isOk()).isTrue();'],
+    [
+      java,
+      'assertThat(service.compute(input)).isEqualTo(3);',
+      'assertThat(service.compute(input))\n    .isEqualTo(3);\nassertTrue(g());',
+    ],
+    [js, 'assert.equal(a, 3);', 'assert(a === 3);'],
+    [js, 'assert.strictEqual(a, 3);', 'assert.ok(a === 3);'],
+    [js, 'expect(x.a).to.equal(1);', "expect(x).to.have.property('a', 1);"],
+    [
+      js,
+      'expect(x.a).to.equal(1);',
+      "expect(x).to.have.property('a').that.equals(1);",
+    ],
+    [
+      js,
+      'expect(r).to.deep.equal([1, 2]);',
+      "expect(r).to.be.an('array').that.deep.equals([1, 2]);",
+    ],
+    [js, 'expect(r).to.equal(3);', "expect(r).to.be.a('number').and.equal(3);"],
+    [
+      java,
+      'assertEquals(Arrays.asList(1, 2, 3), list);',
+      'assertThat(list, Matchers.contains(1, 2, 3));',
+    ],
+  ])('leaves %s: %s → %s', (path, from, to) => {
+    expect(run(path, from, to)).toEqual([]);
+  });
+});
+
+describe('TG007: an exact value replaced by a specific exception', () => {
+  it.each([
+    [
+      'src/test/java/ATest.java',
+      'assertThat(parse(reader)).isEqualTo(new JsonPrimitive(false));',
+      [
+        'var e = assertThrows(JsonSyntaxException.class, () -> parse(reader));',
+        'assertThat(e)',
+        '    .hasMessageThat()',
+        '    .startsWith("Use JsonReader.setStrictness");',
+      ],
+    ],
+    [
+      'a.test.js',
+      'expect(parse(text)).toEqual({ a: 1 });',
+      [
+        'expect(() => parse(text)).toThrow(SyntaxError);',
+        "expect(lastError()).toContain('line 1');",
+      ],
+    ],
+  ])('leaves %s', (path, from, to) => {
+    expect(
+      compareFiles(
+        { before: file(path, from), after: file(path, ...to) },
+        ctx,
+        ['TG007'],
+      ),
+    ).toEqual([]);
+  });
+});

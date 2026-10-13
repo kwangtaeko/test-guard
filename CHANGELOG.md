@@ -79,13 +79,20 @@
   variables, cleanup in `afterEach`/teardown, and values also passed to the
   code under test (as keyword arguments, `**`/`...` spread, in f-strings or
   templates, looped over, or stored) are left alone.
-- TG007 knows more assertion libraries: chai (`.to.deep.equal` →
-  `.to.be.ok`, `.to.not.equal`, `.to.include`, `.to.be.closeTo`),
-  `node:assert` (`assert.strictEqual` → `assert.ok`, `assert(x)`,
-  `assert.notStrictEqual`), jest-extended (`toBeNumber`, `toInclude`…),
-  AssertJ / Truth (`assertThat(x).isEqualTo(y)` → `isNotNull()`,
-  `contains(…)`, `isCloseTo(…)`) and Hamcrest (`assertThat(x, is(y))` →
-  `notNullValue()`). Partial checks count only in place of an exact one.
+- TG007 knows more assertion libraries: chai `expect` (`.to.deep.equal`,
+  `.that.equals` → `.to.be.ok`, `.not.to.equal`, `.to.include`,
+  `.to.be.closeTo`) and `assert` (`assert.isOk`, `assert.include`,
+  `assert.isAbove`…), `node:assert` (`assert.strictEqual` → `assert.ok`,
+  `assert(x)`, `assert.partialDeepStrictEqual`; also `t.assert`), with
+  `assert(a === 3)` counted as exact, jest-extended (`toBeNumber`,
+  `toInclude`…), AssertJ / Truth (`assertThat(x).isEqualTo(y)`, also
+  `assertWithMessage(…).that(x)` and chains wrapped onto their own lines →
+  `isNotNull()`, `contains(…)`, `isCloseTo(…)`, `isEqualToIgnoringCase(…)`,
+  `containsOnly(…)`, `ignoringFields(…)`) and Hamcrest (`assertThat(x,
+  is(y))`, `contains(…)` → `notNullValue()`, `is(startsWith(…))`). Partial
+  checks count only in place of an exact one; `isTrue()` is exact. An exact
+  value replaced by a specific exception (`assertThrows(X.class, …)`,
+  `toThrow(X)`), or the other way round, isn't a weakening.
 - A file too large for a full line diff is split at lines found once on
   each side, so assertions far apart in a large test file aren't paired; a
   helper method named `assert…` is no longer read as one long assertion.

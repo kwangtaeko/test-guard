@@ -36,6 +36,12 @@ interface Spec {
   trivial: RegExp[];
 }
 
+// The subject of a Java fluent assertion: AssertJ / Truth `assertThat(x)`,
+// Truth `assertWithMessage(…).that(x)`, `expect.that(x)`,
+// `assertAbout(…).that(x)`; and an optional Hamcrest class prefix.
+const SUBJECT = String.raw`(?<![\w$])(?:assertThat|(?:assertWithMessage|assertAbout)\s*\(.*?\)\s*\.that|expect\s*\.\s*that)\s*\(`;
+const HAMCREST = String.raw`(?:(?:Matchers|CoreMatchers)\.)?`;
+
 const SPECS: Record<Language, Spec> = {
   js: {
     strong: [
@@ -45,15 +51,22 @@ const SPECS: Record<Language, Spec> = {
         ),
         group: 'value',
       },
-      // chai (`expect(x).to.deep.equal(y)`, not under `.not`) and
-      // node:assert / chai `assert`.
+      // chai (`expect(x).to.deep.equal(y)`, `.that.equals(y)`, never under
+      // `.not`), node:assert / chai `assert` (also `t.assert`, `chai.assert`),
+      // and a plain assert of an equality (`assert(a === 3)`).
       {
-        re: /\.to(?:\.(?!not\b)[\w$]+)*\.(?:equal|equals|eq|eql|eqls)\s*\(/,
+        re: /^(?!.*\.not\b)(?=.*\bexpect\s*\().*\.(?:equal|equals|eq|eql|eqls)\s*\(/,
+        group: 'value',
+        label: 'expect(x).to.equal(y)',
+      },
+      {
+        re: /(?<![\w$])(?:[\w$]+\.)?assert\.(?:equal|strictEqual|deepEqual|deepStrictEqual)\s*\(/,
         group: 'value',
       },
       {
-        re: /(?<![\w$.])assert\.(?:equal|strictEqual|deepEqual|deepStrictEqual)\s*\(/,
+        re: /(?<![\w$])(?:[\w$]+\.)?assert(?:\.(?:ok|isOk|isTrue))?\s*\((?=.*[^!=<>]==)/,
         group: 'value',
+        label: 'assert(x === y)',
       },
       { re: /\.toThrow\s*\(\s*[^\s)]/, group: 'throw', label: 'toThrow(X)' },
     ],
@@ -63,11 +76,11 @@ const SPECS: Record<Language, Spec> = {
         group: 'value',
       },
       {
-        re: /\.to(?:\.[\w$]+)*\.(?:ok|exist)\b|\.to(?:\.[\w$]+)*\.not(?:\.[\w$]+)*\.(?:equal|equals|eq|eql|eqls|null|undefined)\b|(?<![\w$.])assert(?:\.(?:ok|notEqual|notStrictEqual|notDeepEqual|notDeepStrictEqual))?\s*\(/,
+        re: /\.to(?:\.[\w$]+)*\.(?:ok|exist)\b|^(?=.*\bexpect\s*\().*\.not(?:\.[\w$]+)*\.(?:equal|equals|eq|eql|eqls|null|undefined|empty)\b|(?<![\w$])(?:[\w$]+\.)?assert(?:\.(?:ok|isOk|exists|isNotNull|isDefined|isNotUndefined|isNotEmpty|notEqual|notStrictEqual|notDeepEqual|notDeepStrictEqual))?\s*\((?!.*[^!=<>]==)/,
         group: 'value',
       },
       {
-        re: /\.to(?:\.[\w$]+)*\.(?:above|below|least|most|gt|gte|lt|lte|greaterThan|lessThan|include|includes|contain|contains|property|a|an|instanceof|instanceOf|closeTo|approximately|within|match|members|keys|oneOf|satisfy|satisfies)\b/,
+        re: /\.to(?:\.[\w$]+)*\.(?:above|below|least|most|gt|gte|lt|lte|greaterThan|greaterThanOrEqual|lessThan|lessThanOrEqual|include|includes|contain|contains|string|property(?!\s*\([^,()]*,)|a|an|instanceof|instanceOf|closeTo|approximately|within|match|members|keys|oneOf|satisfy|satisfies)\b|(?<![\w$])(?:[\w$]+\.)?assert\.(?:include|deepInclude|nestedInclude|isAbove|isBelow|isAtLeast|isAtMost|closeTo|approximately|match|typeOf|instanceOf|property|hasAnyKeys|hasAllKeys|containsAllKeys|isArray|isString|isNumber|isObject|oneOf|sameMembers|includeMembers|partialDeepStrictEqual)\s*\(/,
         group: 'value',
         pairOnly: true,
       },
@@ -179,14 +192,20 @@ const SPECS: Record<Language, Spec> = {
   java: {
     strong: [
       { re: /(?<![\w$])assertEquals\s*\(/, group: 'value' },
-      // AssertJ and Hamcrest.
+      // AssertJ / Truth (a method on the subject, not `Matchers.contains`;
+      // not with fields or order ignored) and Hamcrest (`is(y)`, but not
+      // `is(<another matcher>)` other than `equalTo`).
       {
-        re: /(?<![\w$])assertThat\s*\(.*\.(?:isEqualTo|isSameAs|containsExactly|containsExactlyInAnyOrder|hasSize|isEqualByComparingTo)\s*\(/,
+        re: new RegExp(
+          String.raw`^(?!.*\.ignoring\w*\s*\().*?${SUBJECT}.*\)\s*\.(?:isEqualTo|isSameAs|containsExactly|containsExactlyInAnyOrder|hasSize|isEqualByComparingTo)\s*\(`,
+        ),
         group: 'value',
         label: 'assertThat(x).isEqualTo(y)',
       },
       {
-        re: /(?<![\w$])assertThat\s*\(.*,\s*(?:(?:Matchers|CoreMatchers)\.)?(?:equalTo|is)\s*\((?!\s*(?:(?:Matchers|CoreMatchers)\.)?(?:not|nullValue|notNullValue|instanceOf|any|anything|greaterThan|lessThan|greaterThanOrEqualTo|lessThanOrEqualTo|closeTo|hasItems?|containsString)\b)/,
+        re: new RegExp(
+          String.raw`${SUBJECT}.*,\s*${HAMCREST}(?:equalTo|is|contains|containsInAnyOrder|hasSize|arrayContaining)\s*\((?!\s*${HAMCREST}(?!equalTo\b)[a-z]\w*\s*\()`,
+        ),
         group: 'value',
         label: 'assertThat(x, is(y))',
       },
@@ -202,7 +221,9 @@ const SPECS: Record<Language, Spec> = {
         group: 'value',
       },
       {
-        re: /(?<![\w$])assertThat\s*\(.*(?:\.(?:isNotNull|isNotEqualTo|isNotEmpty|isNotSameAs|isTrue)\s*\(|,\s*(?:is\s*\(\s*)?(?:(?:Matchers|CoreMatchers)\.)?(?:notNullValue|not)\s*\()/,
+        re: new RegExp(
+          String.raw`${SUBJECT}.*(?:\)\s*\.(?:isNotNull|isNotEqualTo|isNotEmpty|isNotBlank|isNotSameAs)\s*\(|,\s*(?:is\s*\(\s*)?${HAMCREST}(?:notNullValue|not)\s*\()`,
+        ),
         group: 'value',
         label: 'assertThat(x).isNotNull()',
       },
@@ -212,7 +233,9 @@ const SPECS: Record<Language, Spec> = {
         pairOnly: true,
       },
       {
-        re: /(?<![\w$])assertThat\s*\(.*(?:\.(?:contains|containsAll|containsAnyOf|containsKey|containsKeys|containsEntry|hasFieldOrProperty|hasFieldOrPropertyWithValue|isInstanceOf|isCloseTo|isBetween|startsWith|endsWith|isIn|hasSizeGreaterThan|hasSizeLessThan|matches|isPositive|isNegative|isNotZero|isGreaterThan|isGreaterThanOrEqualTo|isLessThan|isLessThanOrEqualTo)\s*\(|,\s*(?:is\s*\(\s*)?(?:(?:Matchers|CoreMatchers)\.)?(?:instanceOf|greaterThan|lessThan|greaterThanOrEqualTo|lessThanOrEqualTo|closeTo|hasItems?|containsString|startsWith|endsWith|anything|hasKey|hasEntry|hasProperty|any)\s*\()/,
+        re: new RegExp(
+          String.raw`${SUBJECT}.*(?:\)\s*\.(?:contains|containsAll|containsAnyOf|containsOnly|containsSubsequence|containsSequence|hasSameElementsAs|isSubsetOf|containsKey|containsKeys|containsEntry|hasFieldOrProperty|hasFieldOrPropertyWithValue|isInstanceOf|isCloseTo|isBetween|startsWith|endsWith|isIn|hasSizeGreaterThan(?:OrEqualTo)?|hasSizeLessThan(?:OrEqualTo)?|hasSizeBetween|matches|satisfies|isPositive|isNegative|isNotZero|isNotNegative|isNotPositive|isGreaterThan|isGreaterThanOrEqualTo|isLessThan|isLessThanOrEqualTo|isEqualToIgnoringCase|isEqualToIgnoringWhitespace|isEqualToNormalizingWhitespace|containsIgnoringCase|isPresent|ignoring\w*)\s*\(|,\s*(?:is\s*\(\s*)?${HAMCREST}(?:instanceOf|isA|oneOf|anyOf|either|greaterThan|lessThan|greaterThanOrEqualTo|lessThanOrEqualTo|closeTo|hasItems?|everyItem|containsString|containsStringIgnoringCase|equalToIgnoringCase|equalToIgnoringWhiteSpace|startsWith|endsWith|anything|hasKey|hasEntry|hasProperty|hasToString|emptyString|empty|any)\s*\()`,
+        ),
         group: 'value',
         label: 'assertThat(x).contains(…) / isCloseTo(…) / isPositive()',
         pairOnly: true,
@@ -266,6 +289,20 @@ function spans(
       if (depth <= 0) last = j;
     }
     if (last === -1) last = i;
+    // A chain wrapped onto lines of its own (`assertThat(x)\n  .isEqualTo(3)`).
+    while (language !== 'python' && /^\s*\./.test(lines[last + 1] ?? '')) {
+      depth = 0;
+      let end = last + 1;
+      for (let j = last + 1; j < lines.length; j++) {
+        for (const ch of lines[j] ?? '') {
+          if (open.includes(ch)) depth++;
+          else if (close.includes(ch)) depth--;
+        }
+        end = j;
+        if (depth <= 0) break;
+      }
+      last = end;
+    }
     for (let k = i; k <= last; k++) found[k] = [i + 1, last + 1];
     i = last;
   }
@@ -339,15 +376,23 @@ export const tg007: Rule = ({
         const same = weakAdded.findIndex((h) => h.text === old.text);
         if (same !== -1) weakAdded.splice(same, 1);
       }
-      for (const strong of hits(
+      const unkept = hits(
         spec.strong,
         hunk.deleted,
         before.lines,
         language,
-      )) {
+      ).filter((strong) => {
         const kept = strongAdded.findIndex((h) => h.group === strong.group);
-        if (kept !== -1) {
-          strongAdded.splice(kept, 1);
+        if (kept === -1) return true;
+        strongAdded.splice(kept, 1);
+        return false;
+      });
+      for (const strong of unkept) {
+        // An exact value replaced by a specific exception, or the other way
+        // round: what the code should do changed, the check didn't weaken.
+        const other = strongAdded.findIndex((h) => h.group !== strong.group);
+        if (other !== -1) {
+          strongAdded.splice(other, 1);
           continue;
         }
         const weak = weakAdded.findIndex((h) => h.group === strong.group);
