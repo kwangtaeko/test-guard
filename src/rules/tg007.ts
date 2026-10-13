@@ -45,12 +45,37 @@ const SPECS: Record<Language, Spec> = {
         ),
         group: 'value',
       },
+      // chai (`expect(x).to.deep.equal(y)`, not under `.not`) and
+      // node:assert / chai `assert`.
+      {
+        re: /\.to(?:\.(?!not\b)[\w$]+)*\.(?:equal|equals|eq|eql|eqls)\s*\(/,
+        group: 'value',
+      },
+      {
+        re: /(?<![\w$.])assert\.(?:equal|strictEqual|deepEqual|deepStrictEqual)\s*\(/,
+        group: 'value',
+      },
       { re: /\.toThrow\s*\(\s*[^\s)]/, group: 'throw', label: 'toThrow(X)' },
     ],
     weak: [
       {
         re: /\.(?:toBeDefined|toBeTruthy|not\.toBeNull|not\.toBeUndefined)\s*\(/,
         group: 'value',
+      },
+      {
+        re: /\.to(?:\.[\w$]+)*\.(?:ok|exist)\b|\.to(?:\.[\w$]+)*\.not(?:\.[\w$]+)*\.(?:equal|equals|eq|eql|eqls|null|undefined)\b|(?<![\w$.])assert(?:\.(?:ok|notEqual|notStrictEqual|notDeepEqual|notDeepStrictEqual))?\s*\(/,
+        group: 'value',
+      },
+      {
+        re: /\.to(?:\.[\w$]+)*\.(?:above|below|least|most|gt|gte|lt|lte|greaterThan|lessThan|include|includes|contain|contains|property|a|an|instanceof|instanceOf|closeTo|approximately|within|match|members|keys|oneOf|satisfy|satisfies)\b/,
+        group: 'value',
+        pairOnly: true,
+      },
+      // jest-extended.
+      {
+        re: /\.(?:toBeNumber|toBeString|toBeArray|toBeObject|toBeBoolean|toBeDate|toBeFunction|toIncludeAllMembers|toIncludeAnyMembers|toIncludeSameMembers|toContainKey|toContainKeys|toContainEntry|toSatisfy|toBeOneOf|toBeWithin|toStartWith|toEndWith|toInclude)\s*\(/,
+        group: 'value',
+        pairOnly: true,
       },
       // Part of the value (`toMatchObject`, `expect.objectContaining`, also
       // nested), any value of a type (`expect.any(Number)`), a property, a
@@ -154,6 +179,17 @@ const SPECS: Record<Language, Spec> = {
   java: {
     strong: [
       { re: /(?<![\w$])assertEquals\s*\(/, group: 'value' },
+      // AssertJ and Hamcrest.
+      {
+        re: /(?<![\w$])assertThat\s*\(.*\.(?:isEqualTo|isSameAs|containsExactly|containsExactlyInAnyOrder|hasSize|isEqualByComparingTo)\s*\(/,
+        group: 'value',
+        label: 'assertThat(x).isEqualTo(y)',
+      },
+      {
+        re: /(?<![\w$])assertThat\s*\(.*,\s*(?:(?:Matchers|CoreMatchers)\.)?(?:equalTo|is)\s*\((?!\s*(?:(?:Matchers|CoreMatchers)\.)?(?:not|nullValue|notNullValue|instanceOf|any|anything|greaterThan|lessThan|greaterThanOrEqualTo|lessThanOrEqualTo|closeTo|hasItems?|containsString)\b)/,
+        group: 'value',
+        label: 'assertThat(x, is(y))',
+      },
       {
         re: /(?<![\w$])assertThrows\s*\(\s*(?!(?:java\.lang\.)?(?:Exception|Throwable)\.class)[\w$.]+\.class/,
         group: 'throw',
@@ -166,8 +202,19 @@ const SPECS: Record<Language, Spec> = {
         group: 'value',
       },
       {
+        re: /(?<![\w$])assertThat\s*\(.*(?:\.(?:isNotNull|isNotEqualTo|isNotEmpty|isNotSameAs|isTrue)\s*\(|,\s*(?:is\s*\(\s*)?(?:(?:Matchers|CoreMatchers)\.)?(?:notNullValue|not)\s*\()/,
+        group: 'value',
+        label: 'assertThat(x).isNotNull()',
+      },
+      {
         re: /(?<![\w$])assertInstanceOf\s*\(/,
         group: 'value',
+        pairOnly: true,
+      },
+      {
+        re: /(?<![\w$])assertThat\s*\(.*(?:\.(?:contains|containsAll|containsAnyOf|containsKey|containsKeys|containsEntry|hasFieldOrProperty|hasFieldOrPropertyWithValue|isInstanceOf|isCloseTo|isBetween|startsWith|endsWith|isIn|hasSizeGreaterThan|hasSizeLessThan|matches|isPositive|isNegative|isNotZero|isGreaterThan|isGreaterThanOrEqualTo|isLessThan|isLessThanOrEqualTo)\s*\(|,\s*(?:is\s*\(\s*)?(?:(?:Matchers|CoreMatchers)\.)?(?:instanceOf|greaterThan|lessThan|greaterThanOrEqualTo|lessThanOrEqualTo|closeTo|hasItems?|containsString|startsWith|endsWith|anything|hasKey|hasEntry|hasProperty|any)\s*\()/,
+        group: 'value',
+        label: 'assertThat(x).contains(…) / isCloseTo(…) / isPositive()',
         pairOnly: true,
       },
       {
@@ -187,6 +234,7 @@ interface Hit {
   line: number;
   group: Matcher['group'];
   label: string;
+  text: string; // the whole assertion
 }
 
 // For each line, the [first, last] lines (1-based) of the assertion it is
@@ -255,7 +303,7 @@ function hits(
       if (!match) continue;
       const label =
         matcher.label ?? match[0].replace(/^[.\s]+/, '').replace(/\s*\($/, '');
-      result.push({ line, group: matcher.group, label });
+      result.push({ line, group: matcher.group, label, text });
       break;
     }
   }
@@ -281,6 +329,12 @@ export const tg007: Rule = ({
     if (before) {
       const strongAdded = hits(spec.strong, hunk.added, after.lines, language);
       const weakAdded = hits(spec.weak, hunk.added, after.lines, language);
+      // A weak assertion deleted and added again unchanged isn't new: a
+      // large file's diff can turn its whole middle into one hunk.
+      for (const old of hits(spec.weak, hunk.deleted, before.lines, language)) {
+        const same = weakAdded.findIndex((h) => h.text === old.text);
+        if (same !== -1) weakAdded.splice(same, 1);
+      }
       for (const strong of hits(
         spec.strong,
         hunk.deleted,

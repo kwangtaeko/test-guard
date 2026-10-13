@@ -2822,3 +2822,121 @@ describe('TG008: expected values given again in other forms', () => {
     expect(run('test_a.py', from, to)).toEqual([]);
   });
 });
+
+describe('TG007: chai, node:assert, jest-extended, AssertJ and Hamcrest', () => {
+  const run = (path: string, from: string, to: string) =>
+    compareFiles(
+      { before: file(path, from), after: file(path, to) },
+      ctx,
+      ['TG007'],
+    ).map(({ message }) => message);
+  const java = 'src/test/java/ATest.java';
+
+  it.each([
+    ['a.test.js', 'expect(add(1, 2)).to.equal(3);', 'expect(add(1, 2)).to.be.ok;'],
+    [
+      'a.test.js',
+      'expect(r).to.deep.equal({ a: 1 });',
+      'expect(r).to.include({ a: 1 });',
+    ],
+    ['a.test.js', 'expect(r).to.eql([1, 2]);', "expect(r).to.be.an('array');"],
+    [
+      'a.test.js',
+      'expect(add(1, 2)).to.equal(3);',
+      'expect(add(1, 2)).to.be.closeTo(3, 1);',
+    ],
+    [
+      'a.test.js',
+      'expect(add(1, 2)).to.equal(3);',
+      'expect(add(1, 2)).to.not.equal(0);',
+    ],
+    ['a.test.js', 'assert.strictEqual(add(1, 2), 3);', 'assert.ok(add(1, 2));'],
+    [
+      'a.test.js',
+      'assert.deepStrictEqual(add(1, 2), 3);',
+      'assert.notStrictEqual(add(1, 2), 0);',
+    ],
+    ['a.test.js', 'assert.equal(add(1, 2), 3);', 'assert(add(1, 2));'],
+    ['a.test.js', 'expect(add(1, 2)).toBe(3);', 'expect(add(1, 2)).toBeNumber();'],
+    [
+      java,
+      'assertThat(add(1, 2)).isEqualTo(3);',
+      'assertThat(add(1, 2)).isNotNull();',
+    ],
+    [
+      java,
+      'assertThat(list).containsExactly(1, 2);',
+      'assertThat(list).contains(1);',
+    ],
+    [java, 'assertEquals(3, add(1, 2));', 'assertThat(add(1, 2)).isPositive();'],
+    [
+      java,
+      'assertThat(add(1, 2), is(3));',
+      'assertThat(add(1, 2), notNullValue());',
+    ],
+    [
+      java,
+      'assertThat(r).isEqualTo(3.0);',
+      'assertThat(r).isCloseTo(3.0, within(1.0));',
+    ],
+  ])('reports %s: %s → %s', (path, from, to) => {
+    expect(run(path, from, to)).toEqual([
+      expect.stringContaining('weakened assertion'),
+    ]);
+  });
+
+  it.each([
+    [
+      'a.test.js',
+      'expect(r).to.deep.equal(x);',
+      'expect(r).to.eql(x);',
+    ],
+    ['a.test.js', 'assert.equal(a, 1);', 'assert.strictEqual(a, 1);'],
+    [
+      'a.test.js',
+      'expect(a).to.not.equal(1);',
+      'expect(a).to.be.ok;',
+    ],
+    [java, 'assertThat(r).isEqualTo(x);', 'assertThat(r).containsExactly(x);'],
+    [java, 'assertThat(r).isNotEqualTo(x);', 'assertThat(r).isNotNull();'],
+    [java, 'assertThat(r, equalTo(x));', 'assertThat(r).isEqualTo(x);'],
+  ])('leaves %s: %s → %s', (path, from, to) => {
+    expect(run(path, from, to)).toEqual([]);
+  });
+
+  it('leaves partial matchers in a new test', () => {
+    expect(
+      run(
+        'a.test.js',
+        'expect(add(1, 2)).to.equal(3);',
+        [
+          'expect(add(1, 2)).to.equal(3);',
+          'expect(r).to.include({ a: 1 });',
+        ].join('\n'),
+      ),
+    ).toEqual([]);
+  });
+});
+
+describe('TG007: a large file diffed as one hunk', () => {
+  it('leaves a weak assertion that is only deleted and added again', () => {
+    const filler = (name: string) =>
+      Array.from({ length: 2100 }, (_, i) => `int ${name}${i} = ${i};`);
+    const path = 'src/test/java/ATest.java';
+    expect(
+      compareFiles(
+        {
+          before: file(
+            path,
+            ...filler('a'),
+            'assertThat(r.ok()).isTrue();',
+            'assertThat(r.size()).isEqualTo(3);',
+          ),
+          after: file(path, ...filler('b'), 'assertThat(r.ok()).isTrue();'),
+        },
+        ctx,
+        ['TG007'],
+      ).filter(({ message }) => message.includes('→')),
+    ).toEqual([]);
+  });
+});
