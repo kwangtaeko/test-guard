@@ -2702,3 +2702,123 @@ describe('TG008: an expected value assigned again, red-team re-check', () => {
     ).toEqual([]);
   });
 });
+
+describe('TG008: expected values given again in other forms', () => {
+  const run = (path: string, from: string[], to: string[]) =>
+    compareFiles(
+      { before: file(path, ...from), after: file(path, ...to) },
+      { ...ctx, implementationChanged: false },
+      ['TG008'],
+    ).map(({ message }) => message);
+  const inTest = (first: string, ...lines: string[]) => [
+    "test('a', () => {",
+    `  let expected = ${first};`,
+    '  let other = 0;',
+    ...lines.map((l) => `  ${l}`),
+    '  expect(add(5, 5)).toEqual(expected);',
+    '});',
+  ];
+  const py = (...lines: string[]) => [
+    'def test_a():',
+    '    expected = 10',
+    '    other = 0',
+    ...lines.map((l) => `    ${l}`),
+    '    assert add(5, 5) == expected',
+  ];
+  const unit = (value: number, ...lines: string[]) => [
+    'class TestA(unittest.TestCase):',
+    '    def setUp(self):',
+    `        self.expected = ${value}`,
+    '',
+    '    def test_a(self):',
+    ...lines.map((l) => `        ${l}`),
+    '        self.assertEqual(add(5, 5), self.expected)',
+  ];
+  const fixture = (value: number, use: string) => [
+    '@pytest.fixture',
+    'def value():',
+    `    return ${value}`,
+    '',
+    'def test_a(value):',
+    `    ${use}`,
+  ];
+
+  it.each([
+    ['a wrapped value', inTest('10'), inTest('10', 'expected = Number("11");')],
+    ['a wrapped declaration', inTest('Number("10")'), inTest('Number("11")')],
+    [
+      'Object.assign',
+      inTest('{ total: 10 }'),
+      inTest('{ total: 10 }', 'Object.assign(expected, { total: 11 });'),
+    ],
+    [
+      'array destructuring',
+      inTest('10'),
+      inTest('10', '[expected, other] = [11, 2];'),
+    ],
+  ])('reports %s', (_, from, to) => {
+    expect(run('a.test.js', from, to)).toHaveLength(1);
+  });
+
+  it.each([
+    ['a tuple assignment', py(), py('expected, other = 11, 2')],
+    ['self.expected changed in setUp', unit(10), unit(11)],
+    [
+      'self.expected given again in the test',
+      unit(10),
+      unit(10, 'self.expected = 11'),
+    ],
+    [
+      'an expected value moved into setUp',
+      [
+        'class TestA(unittest.TestCase):',
+        '    def test_a(self):',
+        '        self.assertEqual(add(5, 5), 10)',
+      ],
+      unit(11),
+    ],
+    [
+      'a fixture return value',
+      fixture(10, 'assert add(5, 5) == value'),
+      fixture(11, 'assert add(5, 5) == value'),
+    ],
+  ])('reports %s', (_, from, to) => {
+    expect(run('test_a.py', from, to)).toHaveLength(1);
+  });
+
+  it.each([
+    [
+      'a value computed from a name',
+      inTest('10'),
+      inTest('10', 'expected = Number(input);'),
+    ],
+    [
+      'Object.assign on the result',
+      inTest('10'),
+      inTest('10', 'Object.assign(other, { total: 11 });'),
+    ],
+  ])('leaves %s', (_, from, to) => {
+    expect(run('a.test.js', from, to)).toEqual([]);
+  });
+
+  it.each([
+    [
+      'a fixture passed to the code',
+      fixture(10, 'assert add(value, 5) == 15'),
+      fixture(11, 'assert add(value, 5) == 15'),
+    ],
+    [
+      'self.expected set in a new test',
+      unit(10),
+      [
+        ...unit(10),
+        '',
+        '    def test_b(self):',
+        '        self.expected = 7',
+        '        self.assertEqual(add(3, 4), self.expected)',
+      ],
+    ],
+  ])('leaves %s', (_, from, to) => {
+    expect(run('test_a.py', from, to)).toEqual([]);
+  });
+});

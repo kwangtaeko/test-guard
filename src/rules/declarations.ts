@@ -1,10 +1,11 @@
 import type { Language } from '../types.js';
 
 // A name bound to a value: `const expected = 11`, `EXPECTED = {…}`,
-// `static final int EXPECTED = 11;`.
+// `static final int EXPECTED = 11;`, `self.expected = 11` (seen by the whole
+// class).
 const DECLARATION: Record<Language, RegExp> = {
   js: /^\s*(?:export\s+)?(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*(?::[^=]*)?=(?![=>])/,
-  python: /^\s*([A-Za-z_]\w*)\s*(?::[^=]*)?=(?!=)/,
+  python: /^\s*((?:self\.)?[A-Za-z_]\w*)\s*(?::[^=]*)?=(?!=)/,
   java: /^\s*(?:(?:public|private|protected|static|final)\s+)*[\w$.<>[\], ?]*[\w$>\]]\s+([A-Za-z_$][\w$]*)\s*=(?!=)/,
 };
 
@@ -51,7 +52,9 @@ export function declarations(
     const name = DECLARATION[language].exec(line)?.[1];
     if (!name || (language === 'python' && at > 0)) continue;
     const last = statementEnd(stripped, i);
-    const end = scopeEnd(stripped, i, language);
+    const end = name.startsWith('self.')
+      ? classEnd(stripped, i)
+      : scopeEnd(stripped, i, language);
     found.push({
       name,
       start: i + 1,
@@ -92,9 +95,26 @@ function scopeEnd(stripped: string[], i: number, language: Language): number {
   return stripped.length - 1;
 }
 
+// The last line index of the Python class line index `i` is in.
+function classEnd(stripped: string[], i: number): number {
+  const indent = (line: string) => line.length - line.trimStart().length;
+  let limit = indent(stripped[i] ?? '');
+  for (let k = i - 1; k >= 0; k--) {
+    const line = stripped[k] ?? '';
+    if (line.trim() === '' || indent(line) >= limit) continue;
+    limit = indent(line);
+    if (/^\s*class\s/.test(line)) break;
+  }
+  for (let j = i + 1; j < stripped.length; j++) {
+    const line = stripped[j] ?? '';
+    if (line.trim() !== '' && indent(line) <= limit) return j - 1;
+  }
+  return stripped.length - 1;
+}
+
 // An assignment to `name`: `name = …`, `name += …`, `name++`, `--name`.
 function assigns(name: string): RegExp {
-  const n = name.replace(/\$/g, '\\$');
+  const n = name.replace(/[$.]/g, '\\$&');
   return new RegExp(
     `(?<![\\w$.])${n}\\s*(?:[-+*/%&|^]|\\*\\*|<<|>>>?|\\?\\?|&&|\\|\\|)?=(?![=>])|(?:\\+\\+|--)\\s*${n}(?![\\w$])|(?<![\\w$.])${n}\\s*(?:\\+\\+|--)`,
   );

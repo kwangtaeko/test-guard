@@ -67,8 +67,11 @@
   reads it is reported too: `expected = 11` under `let expected = 10` or
   `let expected;`, in a `beforeEach`/`@BeforeEach`, `+= 1`, `++`,
   `expected.total = 11`, after other code on the line, a second Python
-  assignment. Values only new checks read, loop variables and cleanup in
-  `afterEach`/teardown are left alone.
+  assignment, `Object.assign(expected, …)`, `a, b = 11, 2`,
+  `[a, b] = [11, 2]`, a value wrapped in `Number("11")`/`int("11")`. Python
+  `self.expected` set in `setUp` counts as an expected value, and so does a
+  pytest fixture a check compares with (`return 11`). Values only new checks
+  read, loop variables and cleanup in `afterEach`/teardown are left alone.
 - TG007: an expected value replaced with the value under test, so the
   check compares a value with itself (`expect(add(1, 2)).toBe(3)` →
   `.toBe(add(1, 2))`, `assert total(c) == total(c)`,
