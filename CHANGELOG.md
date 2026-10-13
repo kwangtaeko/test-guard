@@ -20,6 +20,12 @@
   typo in one isn't reported. Only a string counts as a message, so a
   condition moved there (`assert(true, add(1, 2) === 3)`) is still reported,
   and TG007 reports `assert(true, …)` as meaningless.
+- TG007: one of two identical checks made to compare a value with itself is
+  reported (the other one left in place no longer hides it), and so is a
+  JUnit 4 `assertEquals(MSG, 4, roman("IV"))` with a message in a name:
+  three arguments with no string to tell the message are read both ways.
+  TG008: a name passed to the code under test on a line of its own
+  (`f(\n  expected,\n)`) is an input, not an expected value.
 
 - TG003: assertions in a method nothing calls don't count either: a method
   of a local class or of an object bound to a name (`class Checks {

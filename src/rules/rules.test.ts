@@ -3491,3 +3491,122 @@ describe('TG008: assertion messages, red-team re-check', () => {
     expect(run(path, from, to)).toEqual(['TG008']);
   });
 });
+
+describe('Codex adversarial review: duplicates, multi-line inputs, JUnit 4 messages', () => {
+  it('TG007 reports one of two identical checks made self-comparing', () => {
+    const tests = (second: string) => [
+      "test('a', () => {",
+      '  expect(f()).toBe(1);',
+      '});',
+      "test('b', () => {",
+      `  ${second}`,
+      '});',
+    ];
+    expect(
+      compareFiles(
+        {
+          before: file('a.test.js', ...tests('expect(f()).toBe(1);')),
+          after: file('a.test.js', ...tests('expect(f()).toBe(f());')),
+        },
+        ctx,
+        ['TG007'],
+      ).map(({ message }) => message),
+    ).toEqual([
+      expect.stringContaining('replaced the expected value with the value'),
+    ]);
+  });
+});
+
+describe('Codex adversarial review: inputs passed on lines of their own', () => {
+  const run = (path: string, from: string[], to: string[]) =>
+    compareFiles(
+      { before: file(path, ...from), after: file(path, ...to) },
+      { ...ctx, implementationChanged: false },
+      ['TG008'],
+    ).map(({ message }) => message);
+
+  it.each([
+    [
+      'a.test.js',
+      (v: number) => [
+        "test('a', () => {",
+        `  const expected = ${v};`,
+        '  const r = f(',
+        '    expected,',
+        '  );',
+        '  expect(r).toBe(expected);',
+        '});',
+      ],
+    ],
+    [
+      'test_a.py',
+      (v: number) => [
+        'def test_a():',
+        `    expected = ${v}`,
+        '    r = f(',
+        '        expected,',
+        '    )',
+        '    assert r == expected',
+      ],
+    ],
+    [
+      'src/test/java/ATest.java',
+      (v: number) => [
+        'class ATest {',
+        '  @Test void a() {',
+        `    int expected = ${v};`,
+        '    int r = f(',
+        '        expected);',
+        '    assertEquals(expected, r);',
+        '  }',
+        '}',
+      ],
+    ],
+  ])('leaves an input in %s', (path, lines) => {
+    expect(run(path, lines(10), lines(11))).toEqual([]);
+  });
+
+  it('still reports a fixture named in a multi-line signature', () => {
+    const lines = (v: number) => [
+      '@pytest.fixture',
+      'def value():',
+      `    return ${v}`,
+      '',
+      'def test_a(',
+      '    value,',
+      '):',
+      '    assert add(5, 5) == value',
+    ];
+    expect(run('test_a.py', lines(10), lines(11))).toHaveLength(1);
+  });
+});
+
+describe('Codex adversarial review: JUnit messages that are names', () => {
+  const run = (from: string, to: string) =>
+    compareFiles(
+      {
+        before: file('src/test/java/ATest.java', from),
+        after: file('src/test/java/ATest.java', to),
+      },
+      ctx,
+      ['TG007'],
+    ).map(({ message }) => message);
+  const self = expect.stringContaining('replaced the expected value');
+
+  it.each([
+    [
+      'assertEquals(MSG, 4, roman("IV"));',
+      'assertEquals(MSG, roman("IV"), roman("IV"));',
+    ],
+    [
+      'assertEquals(4, roman("IV"), message);',
+      'assertEquals(roman("IV"), roman("IV"), message);',
+    ],
+    [
+      'assertEquals(1.5, ratio(), 0.01);',
+      'assertEquals(ratio(), ratio(), 0.01);',
+    ],
+  ])('reports %s → %s', (from, to) => {
+    expect(run(from, to)).toEqual([self]);
+  });
+});

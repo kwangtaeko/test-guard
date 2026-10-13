@@ -219,13 +219,22 @@ function checks(root: Node): Check[] {
     const name = nameOf(call);
     const args = argsOf(call);
     if (VALUE_ASSERT.test(name)) {
-      const [first, second] =
-        args.length === 3 && args[0]?.type === 'string_literal'
-          ? args.slice(1)
-          : args;
-      if (first && second) {
-        const equal = ASSERT_EQUAL.test(name);
-        found.push({ node: call, sides: [first, second], equal });
+      // Three arguments: JUnit 4's message first, or JUnit 5's message (or
+      // a delta) last. A string tells which; otherwise both readings count.
+      const string = (a?: Node) => a?.type === 'string_literal';
+      const readings =
+        args.length !== 3
+          ? [args]
+          : string(args[0]) && !string(args[2])
+            ? [args.slice(1)]
+            : string(args[2]) && !string(args[0])
+              ? [args]
+              : [args, args.slice(1)];
+      const equal = ASSERT_EQUAL.test(name);
+      for (const [first, second] of readings) {
+        if (first && second) {
+          found.push({ node: call, sides: [first, second], equal });
+        }
       }
       continue;
     }

@@ -154,12 +154,36 @@ const INPUT = new RegExp(
   'g',
 );
 
+// Lines that pass nothing to the code under test: definitions (their
+// parameters) and logging.
+const NOT_INPUT =
+  /\bfunction\b|^\s*(?:async\s+)?def\s|=>|\b(?:console\.\w+|Object\.assign|print|System\.out\.print\w*)\s*\(/;
+const OWN_LINE = new RegExp(
+  String.raw`^\s*(?:[A-Za-z_]\w*\s*=\s*)?${NAME}\s*(?:,|\)+\s*;?)?\s*$`,
+);
+
+// For each line, the index of the line whose `(` is the innermost bracket
+// still open where it starts; -1 when that bracket isn't a `(`.
+function callLines(stripped: string[]): number[] {
+  const open: { ch: string; line: number }[] = [];
+  return stripped.map((line, i) => {
+    const top = open.at(-1);
+    const at = top?.ch === '(' ? top.line : -1;
+    for (const ch of line) {
+      if ('([{'.includes(ch)) open.push({ ch, line: i });
+      else if (')]}'.includes(ch)) open.pop();
+    }
+    return at;
+  });
+}
+
 function inputNames(
   stripped: string[],
   source: string[],
   language: Language,
 ): Set<string> {
   const names = new Set<string>();
+  const call = callLines(stripped);
   for (let i = 0; i < stripped.length; i++) {
     const line = stripped[i] ?? '';
     if (
@@ -170,13 +194,14 @@ function inputNames(
       i = statementEnd(stripped, i);
       continue;
     }
-    if (
-      /\bfunction\b|^\s*(?:async\s+)?def\s|=>|\b(?:console\.\w+|Object\.assign|print|System\.out\.print\w*)\s*\(/.test(
-        line,
-      )
-    ) {
-      continue;
+    // An argument on a line of its own (`f(\n  expected,\n)`), in a call
+    // that isn't a definition or logging.
+    const own = OWN_LINE.exec(line)?.[1];
+    const opened = call[i] ?? -1;
+    if (own && opened !== -1 && !NOT_INPUT.test(stripped[opened] ?? '')) {
+      names.add(own);
     }
+    if (NOT_INPUT.test(line)) continue;
     for (const match of line.matchAll(INPUT)) {
       for (const name of match.slice(1)) if (name) names.add(name);
     }

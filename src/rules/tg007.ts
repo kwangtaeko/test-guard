@@ -446,7 +446,19 @@ export const tg007: Rule = ({
         );
     };
     const checksAfter = resolved(after, afterLines);
-    const kept = new Set(checksAfter.map((c) => c.sides.join('\n')));
+    // How many of each check are still in the file: two identical checks
+    // and one left is one removed.
+    const kept = new Map<string, number>();
+    for (const c of checksAfter) {
+      const key = c.sides.join('\n');
+      kept.set(key, (kept.get(key) ?? 0) + 1);
+    }
+    const stillThere = (c: ValueCheck) => {
+      const key = c.sides.join('\n');
+      const left = kept.get(key) ?? 0;
+      if (left > 0) kept.set(key, left - 1);
+      return left > 0;
+    };
     const deleted = new Set(hunks.flatMap((hunk) => hunk.deleted));
     const added = new Set(hunks.flatMap((hunk) => hunk.added));
     const lines = (check: ValueCheck, set: Set<number>) => {
@@ -456,12 +468,13 @@ export const tg007: Rule = ({
       }
       return found;
     };
-    // Removed: on a deleted line, and not still in the file.
-    const removed = resolved(before, beforeLines).filter(
-      (c) =>
-        c.sides[0] !== c.sides[1] &&
-        lines(c, deleted).length > 0 &&
-        !kept.has(c.sides.join('\n')),
+    // Removed: on a deleted line, and not still in the file. Unchanged
+    // checks take their own copies first.
+    const checksBefore = resolved(before, beforeLines);
+    const touched = (c: ValueCheck) => lines(c, deleted).length > 0;
+    for (const c of checksBefore) if (!touched(c)) stillThere(c);
+    const removed = checksBefore.filter(
+      (c) => c.sides[0] !== c.sides[1] && touched(c) && !stillThere(c),
     );
     const reported = new Set(findings.map((f) => f.line));
     for (const check of checksAfter) {
