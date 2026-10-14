@@ -26,6 +26,19 @@
   three arguments with no string to tell the message are read both ways.
   TG008: a name passed to the code under test on a line of its own
   (`f(\n  expected,\n)`) is an input, not an expected value.
+- TG008 looks past the test files: a constant in the test folders
+  (`tests/fixtures.js` `export const EXPECTED = 10`, `exports.EXPECTED`, a key
+  of `module.exports = {…}`, Python `TOTAL = 10`, a Java `static final`
+  field) or a pytest fixture's return value (`conftest.py`, also `name=` and
+  over several lines) changed with no implementation change is reported when
+  a test that was already there compares with it. The test must import it
+  (also under an alias) or read it through the module (`F.EXPECTED`,
+  `TestData.EXPECTED`); a `conftest.py` reaches only tests below it. A
+  value passed to the code (`load({ timeout: TIMEOUT })`, `seed(ALICE.id)`)
+  is an input. Files of expected output in the test folders
+  (`tests/data/expected.json`, `out.golden`, `testdata/golden/…`, not
+  `expected_input.json`) changed or deleted are reported like snapshots.
+  `conftest.py` and `__fixtures__/` no longer count as implementation.
 
 - TG003: assertions in a method nothing calls don't count either: a method
   of a local class or of an object bound to a name (`class Checks {

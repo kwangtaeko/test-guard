@@ -408,3 +408,395 @@ describe('Mocha test files, red-team re-check', () => {
     expect(await rules()).toEqual(['TG001']);
   });
 });
+
+describe('expected values in support files and expected output', () => {
+  const setup = (files: Record<string, string>) => {
+    repo = new Repo();
+    for (const [path, content] of Object.entries(files)) {
+      repo.write(path, content);
+    }
+    repo.commitAll();
+    return repo;
+  };
+  const found = async () => brief((await repo.check('--json')).stdout);
+  const JS = {
+    'src/sum.js': 'export const sum = (a, b) => a + b;\n',
+    'tests/fixtures.js':
+      'export const EXPECTED = 10;\nexport const INPUT = 5;\n',
+    'tests/sum.test.js': [
+      "import { sum } from '../src/sum';",
+      "import { EXPECTED, INPUT } from './fixtures';",
+      "test('a', () => {",
+      '  expect(sum(INPUT, 5)).toBe(EXPECTED);',
+      '});',
+      '',
+    ].join('\n'),
+  };
+
+  it('reports a constant a test compares with', async () => {
+    setup(JS);
+    repo.write(
+      'tests/fixtures.js',
+      'export const EXPECTED = 11;\nexport const INPUT = 5;\n',
+    );
+    expect(await found()).toEqual([
+      { ruleId: 'TG008', path: 'tests/fixtures.js', line: 1 },
+    ]);
+  });
+
+  it.each([
+    [
+      'an input',
+      {
+        'tests/fixtures.js':
+          'export const EXPECTED = 10;\nexport const INPUT = 6;\n',
+      },
+    ],
+    [
+      'a new constant',
+      {
+        'tests/fixtures.js':
+          'export const EXPECTED = 10;\nexport const INPUT = 5;\nexport const OTHER = 3;\n',
+      },
+    ],
+    [
+      'a value changed with the implementation',
+      {
+        'tests/fixtures.js':
+          'export const EXPECTED = 11;\nexport const INPUT = 5;\n',
+        'src/sum.js': 'export const sum = (a, b) => a + b + 1;\n',
+      },
+    ],
+  ])('leaves %s alone', async (_, changes) => {
+    setup(JS);
+    for (const [path, content] of Object.entries(changes)) {
+      repo.write(path, content);
+    }
+    expect(await found()).toEqual([]);
+  });
+
+  it.each([
+    [
+      'declares the name itself',
+      "import { sum } from '../src/sum';\nimport './fixtures';\nconst EXPECTED = 10;\ntest('a', () => {\n  expect(sum(5, 5)).toBe(EXPECTED);\n});\n",
+    ],
+    [
+      'does not import the file',
+      "import { sum } from '../src/sum';\nimport { EXPECTED } from './other';\ntest('a', () => {\n  expect(sum(5, 5)).toBe(EXPECTED);\n});\n",
+    ],
+  ])('leaves a constant of the same name when the test %s', async (_, test) => {
+    setup({ ...JS, 'tests/sum.test.js': test });
+    repo.write(
+      'tests/fixtures.js',
+      'export const EXPECTED = 11;\nexport const INPUT = 5;\n',
+    );
+    expect(await found()).toEqual([]);
+  });
+
+  it('reports a pytest fixture in conftest.py and a Python constant', async () => {
+    setup({
+      'calc.py': 'def add(a, b):\n    return a + b\n',
+      'conftest.py':
+        'import pytest\n\n@pytest.fixture\ndef expected():\n    return 10\n',
+      'tests/constants.py': 'TOTAL = 10\n',
+      'tests/test_calc.py': [
+        'from calc import add',
+        'from tests.constants import TOTAL',
+        '',
+        'def test_a(expected):',
+        '    assert add(5, 5) == expected',
+        '',
+        'def test_b():',
+        '    assert add(5, 5) == TOTAL',
+        '',
+      ].join('\n'),
+    });
+    repo.write(
+      'conftest.py',
+      'import pytest\n\n@pytest.fixture\ndef expected():\n    return 11\n',
+    );
+    repo.write('tests/constants.py', 'TOTAL = 11\n');
+    expect(await found()).toEqual([
+      { ruleId: 'TG008', path: 'conftest.py', line: 5 },
+      { ruleId: 'TG008', path: 'tests/constants.py', line: 1 },
+    ]);
+  });
+
+  it('reports a Java constant imported statically', async () => {
+    const data = (v: number) =>
+      `package com.ex;\n\npublic class TestData {\n  public static final int EXPECTED = ${v};\n}\n`;
+    setup({
+      'src/main/java/com/ex/Calc.java':
+        'package com.ex;\n\npublic class Calc {\n  static int add(int a, int b) { return a + b; }\n}\n',
+      'src/test/java/com/ex/TestData.java': data(10),
+      'src/test/java/com/ex/CalcTest.java': [
+        'package com.ex;',
+        '',
+        'import static com.ex.TestData.EXPECTED;',
+        'import static org.junit.jupiter.api.Assertions.assertEquals;',
+        'import org.junit.jupiter.api.Test;',
+        '',
+        'class CalcTest {',
+        '  @Test void add() {',
+        '    assertEquals(EXPECTED, Calc.add(5, 5));',
+        '  }',
+        '}',
+        '',
+      ].join('\n'),
+    });
+    repo.write('src/test/java/com/ex/TestData.java', data(11));
+    expect(await found()).toEqual([
+      { ruleId: 'TG008', path: 'src/test/java/com/ex/TestData.java', line: 4 },
+    ]);
+  });
+
+  it('reports expected output changed or deleted, not new or input data', async () => {
+    setup({
+      'src/render.js': 'export const render = (x) => x;\n',
+      'tests/render.test.js': "test('a', () => {});\n",
+      'tests/data/expected.json': '{ "a": 1 }\n',
+      'tests/golden/page.html': '<p>a</p>\n',
+      'tests/data/input.json': '{ "a": 1 }\n',
+    });
+    repo.write('tests/data/expected.json', '{ "a": 2 }\n');
+    repo.git('rm', '-q', 'tests/golden/page.html');
+    repo.write('tests/data/input.json', '{ "a": 2 }\n');
+    repo.write('tests/data/case2.expected.txt', 'b\n');
+    expect(await found()).toEqual([
+      { ruleId: 'TG008', path: 'tests/data/expected.json' },
+      { ruleId: 'TG008', path: 'tests/golden/page.html' },
+    ]);
+    repo.write('src/render.js', 'export const render = (x) => String(x);\n');
+    expect(await found()).toEqual([]);
+  });
+});
+
+describe('expected values in support files, red-team re-check', () => {
+  // Commit `files`, then apply `changes` (null deletes) to the working tree.
+  const run = async (
+    files: Record<string, string>,
+    changes: Record<string, string>,
+  ) => {
+    repo = new Repo();
+    for (const [path, content] of Object.entries(files)) {
+      repo.write(path, content);
+    }
+    repo.commitAll();
+    for (const [path, content] of Object.entries(changes)) {
+      repo.write(path, content);
+    }
+    return brief((await repo.check('--json')).stdout).map(
+      ({ ruleId, path }) => `${ruleId} ${path}`,
+    );
+  };
+  const SUM = { 'src/sum.js': 'export const sum = (a, b) => a + b;\n' };
+  const jsTest = (head: string, expected: string) =>
+    `${head}\nimport { sum } from '../src/sum';\ntest('a', () => {\n  expect(sum(5, 5)).toBe(${expected});\n});\n`;
+  const CALC = { 'calc.py': 'def add(a, b):\n    return a + b\n' };
+
+  it.each([
+    [
+      'module.exports = {…}',
+      'tests/fixtures.js',
+      'module.exports = {\n  EXPECTED: 10,\n};\n',
+      'module.exports = {\n  EXPECTED: 11,\n};\n',
+      "const { EXPECTED } = require('./fixtures');",
+      'EXPECTED',
+    ],
+    [
+      'module.exports on one line',
+      'tests/fixtures.js',
+      'module.exports = { EXPECTED: 10, INPUT: 5 };\n',
+      'module.exports = { EXPECTED: 11, INPUT: 5 };\n',
+      "const fx = require('./fixtures');",
+      'fx.EXPECTED',
+    ],
+    [
+      'exports.X',
+      'tests/fixtures.js',
+      'exports.EXPECTED = 10;\n',
+      'exports.EXPECTED = 11;\n',
+      "const { EXPECTED } = require('./fixtures');",
+      'EXPECTED',
+    ],
+    [
+      'a namespace import',
+      'tests/fixtures.js',
+      'export const EXPECTED = 10;\n',
+      'export const EXPECTED = 11;\n',
+      "import * as F from './fixtures';",
+      'F.EXPECTED',
+    ],
+    [
+      'an alias',
+      'tests/fixtures.js',
+      'export const EXPECTED = 10;\n',
+      'export const EXPECTED = 11;\n',
+      "import { EXPECTED as want } from './fixtures';",
+      'want',
+    ],
+    [
+      'a __fixtures__ folder',
+      'src/__fixtures__/values.js',
+      'export const EXPECTED = 10;\n',
+      'export const EXPECTED = 11;\n',
+      "import { EXPECTED } from '../src/__fixtures__/values';",
+      'EXPECTED',
+    ],
+  ])('reports %s', async (_, path, from, to, head, expected) => {
+    expect(
+      await run(
+        { ...SUM, [path]: from, 'tests/sum.test.js': jsTest(head, expected) },
+        { [path]: to },
+      ),
+    ).toEqual([`TG008 ${path}`]);
+  });
+
+  it('reports a support file changed while it moves', async () => {
+    // Long enough for git to see a move.
+    const REST =
+      'export const NAMES = ["alpha", "beta", "gamma", "delta"];\n'.repeat(3);
+    repo = new Repo();
+    repo.write('src/sum.js', SUM['src/sum.js']);
+    repo.write('tests/fixtures.js', `export const EXPECTED = 10;\n${REST}`);
+    repo.write(
+      'tests/sum.test.js',
+      jsTest("import { EXPECTED } from './fixtures';", 'EXPECTED'),
+    );
+    repo.commitAll();
+    repo.git('mv', 'tests/fixtures.js', 'tests/data.js');
+    repo.write('tests/data.js', `export const EXPECTED = 11;\n${REST}`);
+    repo.write(
+      'tests/sum.test.js',
+      jsTest("import { EXPECTED } from './data';", 'EXPECTED'),
+    );
+    repo.git('add', '-A');
+    expect(
+      brief((await repo.check('--json')).stdout).map((f) => f.path),
+    ).toEqual(['tests/data.js']);
+  });
+
+  it.each([
+    [
+      'a module attribute',
+      {
+        'tests/constants.py': 'TOTAL = 10\n',
+        'tests/test_calc.py':
+          'from calc import add\nfrom tests import constants\n\ndef test_a():\n    assert add(5, 5) == constants.TOTAL\n',
+      },
+      { 'tests/constants.py': 'TOTAL = 11\n' },
+      'tests/constants.py',
+    ],
+    [
+      'a fixture returning several lines',
+      {
+        'conftest.py':
+          'import pytest\n\n@pytest.fixture\ndef expected():\n    return {\n        "total": 10,\n    }\n',
+        'tests/test_calc.py':
+          'from calc import add\n\ndef test_a(expected):\n    assert {"total": add(5, 5)} == expected\n',
+      },
+      {
+        'conftest.py':
+          'import pytest\n\n@pytest.fixture\ndef expected():\n    return {\n        "total": 11,\n    }\n',
+      },
+      'conftest.py',
+    ],
+    [
+      'a fixture named with name=',
+      {
+        'conftest.py':
+          'import pytest\n\n@pytest.fixture(name="expected")\ndef _expected():\n    return 10\n',
+        'tests/test_calc.py':
+          'from calc import add\n\ndef test_a(expected):\n    assert add(5, 5) == expected\n',
+      },
+      {
+        'conftest.py':
+          'import pytest\n\n@pytest.fixture(name="expected")\ndef _expected():\n    return 11\n',
+      },
+      'conftest.py',
+    ],
+  ])('reports %s', async (_, files, changes, path) => {
+    expect(await run({ ...CALC, ...files }, changes)).toEqual([
+      `TG008 ${path}`,
+    ]);
+  });
+
+  it('reports a Java constant read through its class', async () => {
+    const data = (v: number) =>
+      `package com.ex;\n\npublic class TestData {\n  public static final int EXPECTED = ${v};\n}\n`;
+    expect(
+      await run(
+        {
+          'src/main/java/com/ex/Calc.java':
+            'package com.ex;\n\npublic class Calc {\n  static int add(int a, int b) { return a + b; }\n}\n',
+          'src/test/java/com/ex/TestData.java': data(10),
+          'src/test/java/com/ex/CalcTest.java':
+            'package com.ex;\n\nclass CalcTest {\n  @Test void add() {\n    assertEquals(TestData.EXPECTED, Calc.add(5, 5));\n  }\n}\n',
+        },
+        { 'src/test/java/com/ex/TestData.java': data(11) },
+      ),
+    ).toEqual(['TG008 src/test/java/com/ex/TestData.java']);
+  });
+
+  it.each([
+    [
+      'a variable inside a Python helper',
+      {
+        'tests/utils.py': 'def make():\n    total = 10\n    return total\n',
+        'tests/test_calc.py':
+          'import pytest\nfrom calc import add\nfrom tests.utils import make\n\n@pytest.mark.parametrize("a, total", [(5, 10)])\ndef test_a(a, total):\n    assert add(a, 5) == total\n',
+      },
+      { 'tests/utils.py': 'def make():\n    total = 11\n    return total\n' },
+    ],
+    [
+      'a variable inside a JS helper',
+      {
+        ...SUM,
+        'tests/helpers.js':
+          'export function build() {\n  const result = 10;\n  return result;\n}\n',
+        'tests/sum.test.js':
+          "import { build } from './helpers';\nimport { sum } from '../src/sum';\ntest.each([[5, 10]])('a', (a, result) => {\n  expect(sum(a, 5)).toBe(result);\n});\n",
+      },
+      {
+        'tests/helpers.js':
+          'export function build() {\n  const result = 11;\n  return result;\n}\n',
+      },
+    ],
+    [
+      'a conftest.py fixture in another folder',
+      {
+        'tests/unit/conftest.py':
+          'import pytest\n\n@pytest.fixture\ndef expected():\n    return 10\n',
+        'tests/integration/conftest.py':
+          'import pytest\n\n@pytest.fixture\ndef expected():\n    return 10\n',
+        'tests/integration/test_i.py':
+          'from calc import add\n\ndef test_a(expected):\n    assert add(5, 5) == expected\n',
+      },
+      {
+        'tests/unit/conftest.py':
+          'import pytest\n\n@pytest.fixture\ndef expected():\n    return 11\n',
+      },
+    ],
+    [
+      'settings and seed data given to the code',
+      {
+        ...SUM,
+        'tests/setup.js':
+          "export const TIMEOUT = 5000;\nexport const ALICE = { id: 1, name: 'a' };\n",
+        'tests/load.test.js':
+          "import { TIMEOUT, ALICE } from './setup';\nimport { load, seed, find } from '../src/sum';\ntest('a', () => {\n  const cfg = load({ timeout: TIMEOUT });\n  expect(cfg.timeout).toBe(TIMEOUT);\n  seed(ALICE.id, ALICE.name);\n  expect(find(1)).toEqual(ALICE);\n});\n",
+      },
+      {
+        'tests/setup.js':
+          "export const TIMEOUT = 10000;\nexport const ALICE = { id: 1, name: 'b' };\n",
+      },
+    ],
+    [
+      'input data named after expected output',
+      { 'tests/data/expected_input.json': '{ "a": 1 }\n' },
+      { 'tests/data/expected_input.json': '{ "a": 2 }\n' },
+    ],
+  ])('leaves %s alone', async (_, files, changes) => {
+    expect(await run({ ...CALC, ...files }, changes)).toEqual([]);
+  });
+});

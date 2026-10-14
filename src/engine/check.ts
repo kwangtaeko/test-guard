@@ -14,12 +14,14 @@ import {
   isDependencyFile,
   isImplementation,
   isWatched,
+  type TestFile,
 } from './compare.js';
 import {
   afterSpec,
   type CompareMode,
   createWorktreeIndex,
   findRoot,
+  grepTree,
   listAfterFiles,
   listChanges,
   listTreeFiles,
@@ -77,7 +79,10 @@ export function runCheck(options: CheckOptions): CheckResult {
 
     const findings: Finding[] = [];
     const changes = [...listChanges(root, base, mode, env)];
-    if (base) ctx.findLiteral = literalFinder(root, base, ctx);
+    if (base) {
+      ctx.findLiteral = literalFinder(root, base, ctx);
+      ctx.testsNaming = testsNaming(root, base, ctx, env);
+    }
     // A real implementation change: code or dependencies, not just comments
     // or blank lines (TG008).
     ctx.implementationChanged = changes.some(({ beforePath, afterPath }) => {
@@ -145,6 +150,43 @@ export function activeRuleIds(
   rules: readonly RuleId[] = RULE_IDS,
 ): RuleId[] {
   return rules.filter((id) => config.rules[id] !== 'off');
+}
+
+// Test files in `base` that mention a name as a whole word (TG008).
+function testsNaming(
+  root: string,
+  base: string,
+  ctx: CompareContext,
+  env: NodeJS.ProcessEnv | undefined,
+): (name: string) => TestFile[] {
+  const cache = new Map<string, TestFile[]>();
+  return (name) => {
+    let found = cache.get(name);
+    if (!found) {
+      let paths: string[] = [];
+      try {
+        paths = [
+          ...new Set(grepTree(root, base, [name], true).map((h) => h.path)),
+        ];
+      } catch {
+        // Too much output or an unreadable tree: none found.
+      }
+      found = paths.flatMap((path) => {
+        const language = ctx.detect(path);
+        return language
+          ? [
+              {
+                path,
+                language,
+                content: readBlob(root, `${base}:${path}`, env),
+              },
+            ]
+          : [];
+      });
+      cache.set(name, found);
+    }
+    return found;
+  };
 }
 
 function parentDirs(files: string[]): Set<string> {

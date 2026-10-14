@@ -1,4 +1,9 @@
-import { isAssertionLine, type ValueCheck } from '../languages/index.js';
+import type { TestFile } from '../engine/compare.js';
+import {
+  analyzeSource,
+  isAssertionLine,
+  type ValueCheck,
+} from '../languages/index.js';
 import type { Language } from '../types.js';
 import { isSnapshot } from '../watched.js';
 import {
@@ -147,6 +152,8 @@ const INPUT = new RegExp(
   [
     String.raw`[(,]\s*(?:[A-Za-z_]\w*\s*=\s*)?${NAME}\s*(?=[,)])`,
     String.raw`[(,{[]\s*(?:\.\.\.|\*\*?)\s*${NAME}`,
+    String.raw`[{,]\s*(?:[\w$]+|'[^']*'|"[^"]*")\s*:\s*${NAME}\s*(?=[,}])`,
+    String.raw`[(,]\s*${NAME}(?:\.[\w$]+)+\s*(?=[,)])`,
     String.raw`\$\{\s*${NAME}`,
     String.raw`\bfor\b.*\b(?:in|of)\s+${NAME}`,
     String.raw`^\s*(?!self\.[\w$]+\s*=)[\w$]+(?:\[[^\]]*\]|\.[\w$]+)+\s*=\s*${NAME}\s*;?\s*$`,
@@ -376,6 +383,9 @@ export const tg008: Rule = ({
   afterLines,
   hunks,
   implementationChanged,
+  golden,
+  support,
+  testsNaming,
 }) => {
   if (implementationChanged !== false) return [];
 
@@ -397,6 +407,28 @@ export const tg008: Rule = ({
       ];
     }
     return [];
+  }
+  // A file of expected output, the same way.
+  if (golden && beforePath && (afterPath === null || hunks.length > 0)) {
+    return [
+      {
+        ruleId: 'TG008',
+        path: afterPath ?? beforePath,
+        message:
+          afterPath === null
+            ? `deleted expected output ${NOTE}`
+            : `${afterPath !== beforePath ? 'moved and ' : ''}updated expected output ${NOTE}`,
+      },
+    ];
+  }
+  if (support && testsNaming && beforePath && afterPath) {
+    return supportValues(
+      support.language,
+      { path: beforePath, stripped: support.before, source: beforeLines },
+      { path: afterPath, stripped: support.after, source: afterLines },
+      new Set(hunks.flatMap((h) => h.added)),
+      testsNaming,
+    );
   }
   if (!before || !after || !afterPath) return [];
 
@@ -590,6 +622,269 @@ export const tg008: Rule = ({
   }
   return findings;
 };
+
+interface Version {
+  path: string;
+  stripped: string[];
+  source: string[];
+}
+
+interface Given {
+  name: string;
+  start: number; // lines, 1-based
+  end: number;
+  value: string; // source text
+}
+
+// Values a support file gives that existing tests compare with: a constant
+// (`export const EXPECTED = 10` → `11` with `toBe(EXPECTED)` in a test that
+// imports it) or what a pytest fixture in `conftest.py` returns.
+function supportValues(
+  language: Language,
+  old: Version,
+  now: Version,
+  added: Set<number>,
+  testsNaming: (name: string) => TestFile[],
+): RuleFinding[] {
+  const before = given(old, language);
+  const after = given(now, language);
+  const findings: RuleFinding[] = [];
+  for (const g of after) {
+    const line = [...added].find((n) => n >= g.start && n <= g.end);
+    const was = before.filter((o) => o.name === g.name);
+    if (
+      line === undefined ||
+      was.length !== 1 ||
+      after.filter((o) => o.name === g.name).length !== 1 ||
+      same(
+        shape(was[0]?.value ?? '', language).values,
+        shape(g.value, language).values,
+      ) ||
+      !readByTests(g.name, [old.path, now.path], language, testsNaming)
+    ) {
+      continue;
+    }
+    findings.push({
+      ruleId: 'TG008',
+      path: now.path,
+      line,
+      message: `changed the expected value \`${g.name}\` that tests compare with ${NOTE}: \`${brief([now.source[line - 1] ?? ''])}\``,
+    });
+  }
+  return findings;
+}
+
+// Values given at a support file's top level, with no code in them:
+// constants (`export const EXPECTED = 10`, `exports.EXPECTED = 10`, a key
+// of `module.exports = {…}`, Python `TOTAL = 10`, a Java class's field) and
+// what pytest fixtures return, by the name tests ask for them.
+function given({ stripped, source }: Version, language: Language): Given[] {
+  const depths = blockDepths(stripped);
+  const found: Given[] = declarations(stripped, source, language)
+    .filter((d) =>
+      language === 'python'
+        ? !/^\s/.test(stripped[d.start - 1] ?? '')
+        : depths[d.start - 1] === (language === 'java' ? 1 : 0),
+    )
+    .filter((d) => literal(stripped, d));
+  const add = (name: string, i: number, last: number, at: RegExp) => {
+    const code = stripped
+      .slice(i, last + 1)
+      .join('\n')
+      .replace(at, '')
+      .replace(/[,;]\s*$/, '');
+    if (!isLiteral(code.trim())) return;
+    found.push({
+      name,
+      start: i + 1,
+      end: last + 1,
+      value: source
+        .slice(i, last + 1)
+        .join('\n')
+        .replace(at, '')
+        .replace(/[,;]\s*$/, ''),
+    });
+  };
+  if (language === 'js') {
+    let inObject = false; // in the lines of `module.exports = {`
+    stripped.forEach((line, i) => {
+      const depth = depths[i] ?? 0;
+      if (depth === 0) inObject = false;
+      const exported =
+        /^\s*(?:module\.)?exports\.([A-Za-z_$][\w$]*)\s*=(?![=>])/;
+      const name = depth === 0 ? exported.exec(line)?.[1] : undefined;
+      if (name) add(name, i, statementEnd(stripped, i), /^[^=]*=/);
+      const object = /^\s*(?:module\.exports\s*=|export\s+default)\s*\{(.*)$/;
+      const opened = depth === 0 ? object.exec(line) : null;
+      if (opened && statementEnd(stripped, i) > i) inObject = true;
+      else if (opened) {
+        // One line: `module.exports = { EXPECTED: 10, INPUT: 5 };`
+        for (const [, key, value] of (opened[1] ?? '').matchAll(
+          /([A-Za-z_$][\w$]*)\s*:\s*([^,{}[\]]+)/g,
+        )) {
+          if (key && value && isLiteral(value.replace(/\}.*$/, '').trim())) {
+            const text = new RegExp(String.raw`\b${key}\s*:\s*([^,}]+)`).exec(
+              source[i] ?? '',
+            );
+            found.push({
+              name: key,
+              start: i + 1,
+              end: i + 1,
+              value: text?.[1]?.trim() ?? '',
+            });
+          }
+        }
+      } else if (inObject && depth === 1) {
+        const key = /^\s*([A-Za-z_$][\w$]*)\s*:/.exec(line)?.[1];
+        if (key) add(key, i, statementEnd(stripped, i), /^[^:]*:/);
+      }
+    });
+  }
+  if (language === 'python') {
+    for (const { name, def, end } of fixtureDefs(stripped, source)) {
+      for (let i = def + 1; i <= end; i++) {
+        if (!/^\s*(?:return|yield)\s+\S/.test(stripped[i] ?? '')) continue;
+        const last = statementEnd(stripped, i);
+        add(name, i, last, /^\s*(?:return|yield)\s+/);
+        i = last;
+      }
+    }
+  }
+  return found;
+}
+
+// For each line, how many `{` are open where it starts.
+function blockDepths(stripped: string[]): number[] {
+  let depth = 0;
+  return stripped.map((line) => {
+    const at = depth;
+    for (const ch of line) {
+      if (ch === '{') depth++;
+      else if (ch === '}') depth--;
+    }
+    return at;
+  });
+}
+
+// pytest fixtures: the name tests ask for (`name=` or the function's), the
+// line index of the `def` and the last line of its body.
+function fixtureDefs(
+  stripped: string[],
+  source: string[],
+): { name: string; def: number; end: number }[] {
+  const found: { name: string; def: number; end: number }[] = [];
+  const indent = (line: string) => line.length - line.trimStart().length;
+  stripped.forEach((line, i) => {
+    const def = /^\s*(?:async\s+)?def\s+(\w+)/.exec(line);
+    if (!def?.[1]) return;
+    let name: string | undefined;
+    for (let k = i - 1; k >= 0 && /^\s*@/.test(stripped[k] ?? ''); k--) {
+      if (!/^\s*@(?:pytest(?:_asyncio)?\.)?fixture\b/.test(stripped[k] ?? '')) {
+        continue;
+      }
+      name = /\bname\s*=\s*['"](\w+)['"]/.exec(source[k] ?? '')?.[1] ?? def[1];
+    }
+    if (!name) return;
+    let end = i;
+    for (let j = i + 1; j < stripped.length; j++) {
+      const next = stripped[j] ?? '';
+      if (next.trim() === '') continue;
+      if (indent(next) <= indent(line)) break;
+      end = j;
+    }
+    found.push({ name, def: i, end });
+  });
+  return found;
+}
+
+// Import statements: JS `import … from '…'` and `require('…')`, Python
+// `from … import …` and `import …`, Java `import …;`.
+const IMPORTS =
+  /^\s*(?:import\b[^;]*?\bfrom\s*['"][^'"\n]*['"]|import\s+static\s+[^;\n]+;|import\s+[\w.]+\s*;|(?:const|let|var)\s+[^=;]+?=\s*require\s*\(\s*['"][^'"\n]*['"]\s*\)|from\s+[\w.]+\s+import\s+(?:\([^)]*\)|[^\n]+)|import\s+[\w.]+(?:\s+as\s+\w+)?(?:\s*,\s*[\w.]+(?:\s+as\s+\w+)?)*)/gm;
+
+const word = (text: string) =>
+  new RegExp(
+    String.raw`(?<![\w$])${text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?![\w$])`,
+  );
+
+// The name a file is imported by: `tests/fixtures.js` → `fixtures`,
+// `tests/fixtures/index.js` → `fixtures`.
+function moduleName(path: string): string {
+  const parts = path.replace(/\.\w+$/, '').split('/');
+  const base = parts.at(-1) ?? '';
+  return /^(?:index|__init__)$/.test(base) ? (parts.at(-2) ?? '') : base;
+}
+
+// Whether a test that was already there compares with `name` from the
+// support file at `paths` (before and after a move): on the expected side of
+// a check, not passed to the code under test or declared by the test. The
+// test imports the name (as itself or an alias) or the module and reads it
+// as a member (`fixtures.EXPECTED`, `TestData.EXPECTED`). A `conftest.py`
+// fixture needs no import, but only reaches tests in its folder.
+function readByTests(
+  name: string,
+  paths: string[],
+  language: Language,
+  testsNaming: (name: string) => TestFile[],
+): boolean {
+  const modules = paths.map(moduleName);
+  const conftest = paths.find((p) => /(?:^|\/)conftest\.py$/.test(p));
+  return testsNaming(name).some((test) => {
+    if (test.language !== language) return false;
+    const folder = conftest?.slice(0, conftest.lastIndexOf('/') + 1);
+    if (folder !== undefined && !test.path.startsWith(folder)) return false;
+    const { lines: stripped, checks } = analyzeSource(
+      test.path,
+      test.content,
+      test.language,
+    );
+    const source = test.content.replace(/\r\n?/g, '\n').split('\n');
+    const reads = (local: string) =>
+      expectedNames(checks).has(local) &&
+      !inputNames(stripped, source, language).has(local) &&
+      !declarations(stripped, source, language).some((d) => d.name === local);
+    if (conftest) return reads(name);
+    const statements = [...test.content.matchAll(IMPORTS)]
+      .map(([text]) => text)
+      .filter((text) => modules.some((m) => word(m).test(text)));
+    for (const text of statements) {
+      const alias = new RegExp(
+        String.raw`(?<![\w$.])${name}\s+as\s+([A-Za-z_$][\w$]*)`,
+      ).exec(text)?.[1];
+      const local =
+        alias ??
+        (word(name).test(text) || /import\s+(?:static\s+[\w.]+\.)?\*/.test(text)
+          ? name
+          : undefined);
+      if (local && reads(local)) return true;
+    }
+    // A member of the module, or of a name an import gives it.
+    const member = new RegExp(
+      String.raw`(?<![\w$.])([A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*)\.${name}(?![\w$(])`,
+      'g',
+    );
+    const owner = (q: string) =>
+      modules.includes(q.split('.').at(-1) ?? '') ||
+      statements.some((text) => word(q).test(text));
+    const passed = (q: string) =>
+      stripped.some(
+        (line) =>
+          !isAssertionLine(language, line) &&
+          new RegExp(
+            String.raw`[(,{:]\s*${q.replace(/[.$]/g, '\\$&')}\.${name}\s*[,)}]`,
+          ).test(line),
+      );
+    return checks.some(({ sides }) =>
+      sides.some((side, i) => {
+        if (isCode(side)) return false;
+        const other = sides[1 - i] ?? '';
+        return [...side.matchAll(member)].some(
+          ([text, q]) => q && owner(q) && !other.includes(text) && !passed(q),
+        );
+      }),
+    );
+  });
+}
 
 // A failure message: a string, f-string or template literal (or one joined
 // with `+`), never a condition moved into the message's place.
