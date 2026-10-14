@@ -88,12 +88,13 @@ export function runCheck(options: CheckOptions): CheckResult {
     ctx.implementationChanged = changes.some(({ beforePath, afterPath }) => {
       const path = afterPath ?? beforePath;
       if (path === null || !isImplementation(path, ctx)) return false;
-      // Deleted or renamed code counts; an added file only with code in it.
+      // Deleted code counts; an added or moved file only with code in it
+      // or changed.
       if (isDependencyFile(path) || afterPath === null) return true;
-      if (beforePath !== null && beforePath !== afterPath) return true;
       return changesCode(
         base && beforePath ? readBlob(root, `${base}:${beforePath}`, env) : '',
         readBlob(root, afterSpec(mode, path), env),
+        path,
       );
     });
     for (const { beforePath, afterPath } of changes) {

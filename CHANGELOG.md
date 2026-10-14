@@ -39,6 +39,13 @@
   (`tests/data/expected.json`, `out.golden`, `testdata/golden/…`, not
   `expected_input.json`) changed or deleted are reported like snapshots.
   `conftest.py` and `__fixtures__/` no longer count as implementation.
+- TG008: an implementation change is judged on the code without comments,
+  Python docstrings and whitespace, so editing text inside a block comment
+  or a comment after code, or moving a file unchanged, no longer turns
+  TG008 off. A string that looks like a comment (`'a // b'`) is code.
+- TG003: a handler counts as reporting the failure by storing it only when
+  it stores the caught error (`errors.push(e)`) in a list the file then
+  checks or throws; `logs.push('ignored')` swallows the failure.
 
 - TG003: assertions in a method nothing calls don't count either: a method
   of a local class or of an object bound to a name (`class Checks {

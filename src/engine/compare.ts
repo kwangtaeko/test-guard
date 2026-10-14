@@ -218,18 +218,80 @@ export const isDependencyFile = (path: string) => DEPENDENCIES.test(path);
 export const isImplementationCode = (path: string, ctx: CompareContext) =>
   isImplementation(path, ctx) && !isDependencyFile(path);
 
-// Whether a code change does anything: lines other than blank ones and
-// comments changed.
-export function changesCode(before: string, after: string): boolean {
-  const hunks = diffLines(splitLines(before), splitLines(after));
-  const lines = [
-    ...hunks.flatMap((h) => h.deleted.map((n) => splitLines(before)[n - 1])),
-    ...hunks.flatMap((h) => h.added.map((n) => splitLines(after)[n - 1])),
-  ];
-  return lines.some((line) => {
-    const t = (line ?? '').trim();
-    return t !== '' && !/^(?:\/\/|#|\/\*|\*|<!--|--)/.test(t);
-  });
+// Whether a code change does anything: more than comments (wherever they
+// sit on a line), docstrings or whitespace changed.
+export function changesCode(
+  before: string,
+  after: string,
+  path: string,
+): boolean {
+  return codeOf(before, path) !== codeOf(after, path);
+}
+
+// A source file's code without comments, Python docstrings, blank lines and
+// whitespace that doesn't matter. Strings are kept as written, and so is
+// Python's indentation.
+function codeOf(source: string, path: string): string {
+  const python = /\.py$/i.test(path);
+  const hash = /\.(?:py|sh|rb|ps1|php)$/i.test(path);
+  const slash = !/\.(?:py|sh|rb|ps1)$/i.test(path);
+  const dash = /\.sql$/i.test(path);
+  const markup = /\.(?:vue|svelte)$/i.test(path);
+  const text = toLf(source);
+  const end = (from: number) => {
+    const n = text.indexOf('\n', from);
+    return n === -1 ? text.length : n;
+  };
+  let out = '';
+  let lineStart = true;
+  let i = 0;
+  while (i < text.length) {
+    const ch = text[i] ?? '';
+    if (ch === '\n') {
+      out += ch;
+      lineStart = true;
+      i++;
+    } else if (/\s/.test(ch)) {
+      if (python && lineStart) out += ch;
+      i++;
+    } else if (
+      (slash && text.startsWith('//', i)) ||
+      (hash && ch === '#') ||
+      (dash && text.startsWith('--', i))
+    ) {
+      i = end(i);
+    } else if (slash && text.startsWith('/*', i)) {
+      const close = text.indexOf('*/', i + 2);
+      i = close === -1 ? text.length : close + 2;
+    } else if (markup && text.startsWith('<!--', i)) {
+      const close = text.indexOf('-->', i + 4);
+      i = close === -1 ? text.length : close + 3;
+    } else if (ch === '"' || ch === "'" || ch === '`') {
+      const quote =
+        python && text.startsWith(ch.repeat(3), i) ? ch.repeat(3) : ch;
+      let j = i + quote.length;
+      while (j < text.length && !text.startsWith(quote, j)) {
+        if (quote.length === 1 && ch !== '`' && text[j] === '\n') break;
+        j += text[j] === '\\' ? 2 : 1;
+      }
+      if (text.startsWith(quote, j)) j += quote.length;
+      j = Math.min(text.length, j);
+      // A Python docstring: a triple-quoted string on lines of its own.
+      const docstring: boolean =
+        quote.length === 3 && lineStart && text.slice(j, end(j)).trim() === '';
+      if (!docstring) out += text.slice(i, j);
+      lineStart = lineStart && docstring;
+      i = j;
+    } else {
+      out += ch;
+      lineStart = false;
+      i++;
+    }
+  }
+  return out
+    .split('\n')
+    .filter((line) => line.trim() !== '')
+    .join('\n');
 }
 
 function parentDir(path: string): string {

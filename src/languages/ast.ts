@@ -24,16 +24,30 @@ export interface Check {
 
 // A handler body fails the test: it rethrows, fails, or checks the error
 // with something other than a check that always passes. Keeping the error
-// to fail later counts as failing: `errors.push(e)`, or `last = e` where the
-// file (`code`) throws or checks `last`.
+// to fail later counts as failing: `errors.push(e)` or `last = e` where the
+// file (`code`) throws or checks `errors` or `last`.
 export function reportsFailure(
   body: string,
   fails: RegExp,
   alwaysPasses: RegExp,
   caught?: { name: string; code: string },
 ): boolean {
-  if (/\.(?:push|append|add|addError)\s*\(/.test(body)) return true;
-  const quote = (s: string) => s.replace(/\$/g, '\\$');
+  const quote = (s: string) => s.replace(/[$.]/g, '\\$&');
+  // Checked or thrown: `expect(errors)…`, `assert not errors`,
+  // `assertTrue(errors.isEmpty())`, `throw last`, `if (errors.length) throw`.
+  const checked = (name: string, code: string) =>
+    new RegExp(
+      String.raw`(?:(?<![\w$.])(?:throw|raise)\b|(?<![\w$.])(?:expect|assert\w*)\s*\(|(?<![\w$.])assert\s)[^;\n{}]*?(?<![\w$.])${quote(name)}(?![\w$])|\bif\b[^\n]*?(?<![\w$.])${quote(name)}(?![\w$])[^\n]*?\b(?:throw|raise|fail)\b`,
+    ).test(code);
+  if (caught) {
+    const stored = new RegExp(
+      String.raw`((?:self\.|this\.)?[\w$]+)\.(?:push|append|add|addError)\s*\([^;\n]*?(?<![\w$.])${quote(caught.name)}(?![\w$])`,
+      'g',
+    );
+    for (const [, list] of body.matchAll(stored)) {
+      if (list && checked(list, caught.code)) return true;
+    }
+  }
   const kept =
     caught &&
     new RegExp(

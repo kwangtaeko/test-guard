@@ -355,6 +355,32 @@ describe('swallowed assertions, red-team re-check', () => {
     expect(swallowed(path, source)).toBe(count);
   });
 
+  // Codex adversarial review: storing something else, or never checking
+  // what was stored, swallows the failure.
+  it.each([
+    [
+      'a.test.js',
+      "it('a', () => {\n  const logs = [];\n  try { expect(f()).toBe(1) } catch (e) { logs.push('ignored') }\n});\n",
+    ],
+    [
+      'a.test.js',
+      "it('a', () => {\n  const errors = [];\n  try { expect(f()).toBe(1) } catch (e) { errors.push(e) }\n});\n",
+    ],
+    [
+      'test_a.py',
+      'def test_a():\n    seen = []\n    try:\n        assert f() == 1\n    except AssertionError as e:\n        seen.append("x")\n    assert seen is not None or True\n',
+    ],
+    [
+      'src/test/java/ATest.java',
+      'class ATest {\n  @Test void a() {\n    try { assertEquals(1, f()); } catch (AssertionError e) { metrics.add(1); }\n  }\n}\n',
+    ],
+  ])(
+    '%s: swallowed when the stored value is not the error checked later (%#)',
+    (path, source) => {
+      expect(swallowed(path, source)).toBe(1);
+    },
+  );
+
   it.each([
     // The handler collects the error for a later assertion.
     [
@@ -364,6 +390,14 @@ describe('swallowed assertions, red-team re-check', () => {
     [
       'test_a.py',
       'def test_a():\n    errors = []\n    try:\n        assert f() == 1\n    except AssertionError as e:\n        errors.append(e)\n    assert not errors\n',
+    ],
+    [
+      'a.test.js',
+      "it('a', () => {\n  const errors = [];\n  try { expect(f()).toBe(1) } catch (e) { errors.push(e.message) }\n  if (errors.length) throw new Error(errors.join());\n});\n",
+    ],
+    [
+      'src/test/java/ATest.java',
+      'class ATest {\n  @Test void a() {\n    try { assertEquals(1, f()); } catch (AssertionError e) { errors.add(e); }\n    assertTrue(errors.isEmpty());\n  }\n}\n',
     ],
     // Other assertion styles in the handler.
     [

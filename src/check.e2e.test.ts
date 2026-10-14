@@ -800,3 +800,109 @@ describe('expected values in support files, red-team re-check', () => {
     expect(await run({ ...CALC, ...files }, changes)).toEqual([]);
   });
 });
+
+describe('Codex adversarial review: edits that change no code', () => {
+  const run = async (
+    files: Record<string, string>,
+    changes: Record<string, string>,
+    move?: [string, string],
+  ) => {
+    repo = new Repo();
+    for (const [path, content] of Object.entries(files)) {
+      repo.write(path, content);
+    }
+    repo.commitAll();
+    if (move) repo.git('mv', ...move);
+    for (const [path, content] of Object.entries(changes)) {
+      repo.write(path, content);
+    }
+    return brief((await repo.check('--json')).stdout).map((f) => f.ruleId);
+  };
+  const JS_SRC = [
+    '/*',
+    ' * Adds two numbers.',
+    ' */',
+    'export const sum = (a, b) => a + b; // fast',
+    "export const name = 'a // b';",
+    '',
+  ].join('\n');
+  const jsTest = (v: number) =>
+    `import { sum } from './sum';\ntest('a', () => {\n  expect(sum(5, 5)).toBe(${v});\n});\n`;
+  const PY_SRC =
+    'def add(a, b):\n    """Add two numbers."""\n    return a + b  # fast\n';
+  const pyTest = (v: number) =>
+    `from calc import add\n\ndef test_a():\n    assert add(5, 5) == ${v}\n`;
+
+  it.each([
+    ['inside a block comment', JS_SRC.replace('Adds two', 'Adds 2')],
+    ['in a comment after code', JS_SRC.replace('// fast', '// faster')],
+    ['in whitespace', JS_SRC.replace('a + b;', 'a+b;')],
+  ])('reports an expected value changed with an edit %s', async (_, src) => {
+    expect(
+      await run(
+        { 'src/sum.js': JS_SRC, 'src/sum.test.js': jsTest(10) },
+        { 'src/sum.js': src, 'src/sum.test.js': jsTest(11) },
+      ),
+    ).toEqual(['TG008']);
+  });
+
+  it('reports an expected value changed with a Python docstring edit', async () => {
+    expect(
+      await run(
+        { 'calc.py': PY_SRC, 'tests/test_calc.py': pyTest(10) },
+        {
+          'calc.py': PY_SRC.replace('Add two', 'Add 2').replace(
+            '# fast',
+            '# x',
+          ),
+          'tests/test_calc.py': pyTest(11),
+        },
+      ),
+    ).toEqual(['TG008']);
+  });
+
+  it('reports an expected value changed with a file moved unchanged', async () => {
+    const big = `${JS_SRC}export const a = 1;\nexport const b = 2;\n`;
+    expect(
+      await run(
+        {
+          'src/sum.js': big,
+          'src/other.js': big,
+          'src/sum.test.js': jsTest(10),
+        },
+        { 'src/sum.test.js': jsTest(11) },
+        ['src/other.js', 'src/moved.js'],
+      ),
+    ).toEqual(['TG008']);
+  });
+
+  it.each([
+    ['code', JS_SRC.replace('a + b;', 'a + b + 1;')],
+    ['a string that looks like a comment', JS_SRC.replace('a // b', 'a // c')],
+    [
+      'a line taken out of a block comment',
+      JS_SRC.replace('/*\n', '/*\n */\nlog();\n/*\n'),
+    ],
+  ])('leaves an expected value changed with %s', async (_, src) => {
+    expect(
+      await run(
+        { 'src/sum.js': JS_SRC, 'src/sum.test.js': jsTest(10) },
+        { 'src/sum.js': src, 'src/sum.test.js': jsTest(11) },
+      ),
+    ).toEqual([]);
+  });
+
+  it('leaves a change to Python indentation', async () => {
+    const src =
+      'def add(a, b):\n    if a:\n        return a + b\n    return b\n';
+    expect(
+      await run(
+        { 'calc.py': src, 'tests/test_calc.py': pyTest(10) },
+        {
+          'calc.py': src.replace('        return a + b', '    return a + b'),
+          'tests/test_calc.py': pyTest(11),
+        },
+      ),
+    ).toEqual([]);
+  });
+});
