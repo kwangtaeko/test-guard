@@ -38,6 +38,7 @@ import {
 } from '../hook-io/common.js';
 import { toLf } from '../languages/index.js';
 import { mochaTestPatterns } from '../mocha.js';
+import { nodeTestPatterns } from '../node-test.js';
 import { normalizePath } from '../paths.js';
 import type { RuleId } from '../rules/index.js';
 import { hooksTurnedOff } from '../rules/tg006.js';
@@ -488,13 +489,14 @@ function loadContext(root: string): { config: Config; ctx: CompareContext } {
   let loaded = contexts.get(root);
   if (!loaded) {
     const config = parseConfig(readBlobIfExists(root, `HEAD:${CONFIG_FILE}`));
+    const committed = (path: string) => readBlobIfExists(root, `HEAD:${path}`);
     loaded = {
       config,
       ctx: {
-        ...createContext(
-          config,
-          mochaTestPatterns((path) => readBlobIfExists(root, `HEAD:${path}`)),
-        ),
+        ...createContext(config, [
+          ...mochaTestPatterns(committed),
+          ...nodeTestPatterns(committed),
+        ]),
         // Before the tool runs, the disk is the "before" side.
         dirExisted: (dir) => {
           const path = join(root, dir);

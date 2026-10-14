@@ -1,4 +1,6 @@
+import picomatch from 'picomatch';
 import { mochaTestPatterns } from '../mocha.js';
+import { nodeTestPatterns } from '../node-test.js';
 import type { RunnerConfig } from '../watched.js';
 import { yamlBlock, yamlBlockRange } from './tg006.js';
 import type { Rule, RuleFinding } from './types.js';
@@ -39,8 +41,14 @@ const VITEST = [
   'dir',
 ].map(word);
 
+// `node --test` options that run fewer tests.
+const NODE_TEST: Token = {
+  re: /--test-(?:name-pattern|skip-pattern|only|shard)\b/,
+  label: 'node --test filter',
+};
+
 const TOKENS: Record<RunnerConfig, Token[]> = {
-  'package.json': JEST.map(word),
+  'package.json': [...JEST.map(word), NODE_TEST],
   jest: JEST.map(word),
   vitest: VITEST,
   // Vitest reads `test` from vite.config.* too; other keys there aren't tests.
@@ -142,6 +150,7 @@ const UNABLE_TO_FAIL: Token = {
 };
 const TEST_STEP: Token[] = [
   UNABLE_TO_FAIL,
+  NODE_TEST,
   ...TOKENS.pytest,
   ...['testNamePattern', 'testPathIgnorePatterns', 'passWithNoTests'].map(word),
   {
@@ -378,6 +387,15 @@ export const tg005: Rule = ({
       message: `narrowed Mocha's test files: \`${lost}\` no longer included`,
     });
   }
+  // Fewer files for `node --test`: a pattern dropped or narrowed.
+  const lostNode = nodeNarrowed(beforePath, afterPath, beforeLines, afterLines);
+  if (lostNode && path) {
+    findings.push({
+      ruleId: 'TG005',
+      path,
+      message: `narrowed the files \`node --test\` runs: \`${lostNode}\` no longer included`,
+    });
+  }
   if (!runnerConfig || !afterPath) return findings;
   if (!beforePath && !addedToExistingDir) return findings;
   const before: Before = {
@@ -418,6 +436,40 @@ export const tg005: Rule = ({
   }
   return findings;
 };
+
+// A pattern the root `package.json` gave `node --test` before the change
+// whose files the patterns after it don't all reach: a sample path for
+// each of its brace choices (`test/**/*.{js,mjs}` → `test/a.js`,
+// `test/a.mjs`, …) is tried.
+function nodeNarrowed(
+  beforePath: string | null,
+  afterPath: string | null,
+  beforeLines: string[],
+  afterLines: string[],
+): string | undefined {
+  if (beforePath !== 'package.json') return undefined;
+  const patterns = (path: string | null, lines: string[]) =>
+    nodeTestPatterns((p) => (p === path ? lines.join('\n') : null));
+  const now = patterns(afterPath, afterLines);
+  const reached = now.length > 0 ? picomatch(now) : () => false;
+  return patterns(beforePath, beforeLines).find(
+    (pattern) =>
+      !now.includes(pattern) && samples(pattern).some((path) => !reached(path)),
+  );
+}
+
+// Paths a glob matches: `**/` left out, `*` as `a` and as `z`, one per
+// brace choice.
+function samples(pattern: string): string[] {
+  const brace = /\{([^{}]*)\}/.exec(pattern);
+  if (brace) {
+    return (brace[1] ?? '')
+      .split(',')
+      .flatMap((choice) => samples(pattern.replace(brace[0], choice)));
+  }
+  const path = pattern.replace(/\*\*\//g, '');
+  return ['a', 'z'].map((x) => path.replace(/[*?]/g, x));
+}
 
 // A Mocha test file pattern the root `package.json` or `.mocharc.*` gave
 // before the change and not after.

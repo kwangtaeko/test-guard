@@ -71,7 +71,7 @@ export function parseConfig(text: string | null): Config {
 }
 
 // `runner`: test file patterns a test runner's own settings give (Mocha's
-// `test/*.js`), added to the JS ones.
+// `test/*.js`, `node --test`'s `test/**/*.js`), added to the JS ones.
 export function createContext(
   config: Config,
   runner: string[] = [],
@@ -91,10 +91,11 @@ export function createContext(
       ? picomatch(config.exclude, { dot: true })
       : () => false;
   const excluded = (path: string) => isExcluded(normalizePath(path));
-  // Not dotfiles (`test/.eslintrc.js`), which Mocha doesn't run either.
+  // Not dotfiles (`test/.eslintrc.js`) or dependencies, which the runners
+  // don't run either.
   const byRunner =
     runner.length > 0 && config.languages.includes('js')
-      ? picomatch(runner)
+      ? picomatch(runner, { ignore: '**/node_modules/**' })
       : () => false;
   const runnerOnly = (path: string) => {
     const normalized = normalizePath(path);

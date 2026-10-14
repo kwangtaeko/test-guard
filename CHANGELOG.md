@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+- Node's own runner: when a root `package.json` script runs `node --test`
+  (also `tsx --test`, behind `npx`, `c8`, `cross-env` and the like), the
+  files it runs count as tests: the patterns, directories and files the
+  script gives, or Node's defaults (`test/**`, `*-test.*`, `*_test.*`,
+  `test-*.*`, `test.*`, for JS and TS). As with Mocha, a file found only
+  this way counts when it has tests, and `node_modules` never does. TG005
+  reports a script change that leaves some of those files out, and
+  `--test-name-pattern`, `--test-skip-pattern`, `--test-only` or
+  `--test-shard` added to any script. Extglobs (`*.?(c|m)js`) are read as
+  patterns, and one from the shell (`$GLOB`) as any file. A byte order mark
+  in `package.json` no longer hides Mocha's or Node's settings.
 - Mocha projects: test files without `.test.` in their names are found from
   Mocha's own settings: the directories and globs the `package.json` scripts
   give `mocha`, `spec` in `.mocharc.*` or `package.json` `"mocha"`, or

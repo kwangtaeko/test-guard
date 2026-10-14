@@ -607,3 +607,15 @@ describe('PreToolUse: Mocha test files', () => {
     ).toContain('TG004');
   });
 });
+
+describe('PreToolUse: node --test files', () => {
+  it('blocks a skip added to test/*.js in a node --test project', () => {
+    setup({
+      'package.json': JSON.stringify({ scripts: { test: 'node --test' } }),
+      'test/app.js': TEST,
+    });
+    expect(
+      denied(edit('test/app.js', "it('adds'", "it.skip('adds'")),
+    ).toContain('TG004');
+  });
+});

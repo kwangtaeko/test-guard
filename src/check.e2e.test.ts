@@ -906,3 +906,91 @@ describe('Codex adversarial review: edits that change no code', () => {
     ).toEqual([]);
   });
 });
+
+describe('node --test files outside the default patterns', () => {
+  const setup = (scripts: Record<string, string>) => {
+    repo = new Repo();
+    repo.write('package.json', JSON.stringify({ scripts }, null, 2));
+    repo.write('test/app.js', APP);
+    repo.write('lib/math-test.mjs', APP);
+    repo.write('test/helpers.js', 'exports.x = 1;\n');
+    repo.write('node_modules/dep/test/a.js', APP);
+    repo.commitAll();
+    return repo;
+  };
+  const APP =
+    "const { test } = require('node:test');\ntest('a', () => {});\ntest('b', () => {});\n";
+  const SKIPPED = APP.replace("test('b'", "test.skip('b'");
+  const found = async () =>
+    brief((await repo.check('--json')).stdout).map(
+      ({ ruleId, path }) => `${ruleId} ${path}`,
+    );
+
+  it("reads Node's default test files", async () => {
+    setup({ test: 'node --test' });
+    repo.write('test/app.js', SKIPPED);
+    repo.write('lib/math-test.mjs', SKIPPED);
+    repo.write('test/helpers.js', 'exports.x = 2;\n');
+    repo.write('node_modules/dep/test/a.js', SKIPPED);
+    expect(await found()).toEqual([
+      'TG004 lib/math-test.mjs',
+      'TG004 test/app.js',
+    ]);
+  });
+
+  it('reads the patterns a script gives', async () => {
+    setup({ test: 'npm run unit', unit: 'node --test "lib/**/*.mjs"' });
+    repo.write('test/app.js', SKIPPED);
+    repo.write('lib/math-test.mjs', SKIPPED);
+    expect(await found()).toEqual(['TG004 lib/math-test.mjs']);
+  });
+
+  it('reports a script that narrows them', async () => {
+    setup({ test: 'npm run unit', unit: 'node --test' });
+    repo.write(
+      'package.json',
+      JSON.stringify(
+        { scripts: { test: 'npm run unit', unit: 'node --test test/' } },
+        null,
+        2,
+      ),
+    );
+    expect(await found()).toEqual(['TG005 package.json']);
+  });
+
+  it.each([
+    ['--test-skip-pattern .', ['TG005 package.json']],
+    ['--test-name-pattern none', ['TG005 package.json']],
+    ['--test-only', ['TG005 package.json']],
+    ['--test-reporter spec', []],
+  ])('judges %s added to a script other than test', async (flag, want) => {
+    setup({ test: 'npm run unit', unit: 'node --test "lib/**/*.?(c|m)js"' });
+    repo.write(
+      'package.json',
+      JSON.stringify(
+        {
+          scripts: {
+            test: 'npm run unit',
+            unit: `node --test "lib/**/*.?(c|m)js" ${flag}`,
+          },
+        },
+        null,
+        2,
+      ),
+    );
+    expect(await found()).toEqual(want);
+  });
+
+  it('leaves a script that widens them', async () => {
+    setup({ test: 'npm run unit', unit: 'node --test test/' });
+    repo.write(
+      'package.json',
+      JSON.stringify(
+        { scripts: { test: 'npm run unit', unit: 'node --test' } },
+        null,
+        2,
+      ),
+    );
+    expect(await found()).toEqual([]);
+  });
+});

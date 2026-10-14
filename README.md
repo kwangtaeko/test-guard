@@ -134,12 +134,12 @@ git commit -m "test: skip flaky subtraction" -m "Test-Guard-Approved: tracked in
 | TG008 | Expected values rewritten to match the code: an assertion whose values changed (`toBe(10)` → `toBe(11)`, or `const expected = 10` → `11` with `toBe(expected)`), a constant or pytest fixture in the test folders that tests compare with (`tests/fixtures.js`, `conftest.py`), a changed `.snap` file, inline snapshot or expected-output file (`tests/data/expected.json`, `*.golden`), while no implementation file changed. Judged at commit, in CI and when the agent stops (not per edit, so fixing a test before the code is fine); agents are also stopped from running tests with `-u` |
 | TG009 | A test input special-cased in the code: a new comparison such as `if (s === 'IV') return 4` where an existing test passes `'IV'` to the code under test and expects `4`, and the code never used that value before. Judged per edit, at commit, in CI and at Stop |
 
-Languages: TypeScript/JavaScript (Jest, Vitest, Mocha), Python (pytest,
+Languages: TypeScript/JavaScript (Jest, Vitest, Mocha, `node --test`), Python (pytest,
 unittest) and Java (JUnit 4/5).
 
 | Language | Test files (default) |
 |---|---|
-| JS/TS | `*.test.*`, `*.spec.*`, `__tests__/**` (JS/TS extensions); in a Mocha project also its specs (`package.json` test script, `.mocharc.*`, or Mocha's default `test/*.{js,cjs,mjs}`) |
+| JS/TS | `*.test.*`, `*.spec.*`, `__tests__/**` (JS/TS extensions); in a Mocha project also its specs (`package.json` test script, `.mocharc.*`, or Mocha's default `test/*.{js,cjs,mjs}`); with `node --test` in a `package.json` script, the patterns it gives or Node's defaults (`test/**`, `*-test.*`, `test-*.*`, …) |
 | Python | `test_*.py`, `*_test.py` |
 | Java | `src/test/**/*Test.java`, `*Tests.java`, `*IT.java` |
 

@@ -5,6 +5,7 @@ import {
   parseConfig,
 } from '../config.js';
 import { mochaTestPatterns } from '../mocha.js';
+import { nodeTestPatterns } from '../node-test.js';
 import { RULE_IDS, type RuleId } from '../rules/index.js';
 import type { Finding } from '../types.js';
 import {
@@ -53,14 +54,14 @@ export function runCheck(options: CheckOptions): CheckResult {
   const config = parseConfig(
     base ? readBlobIfExists(root, `${base}:${CONFIG_FILE}`) : null,
   );
+  const committed = (path: string) =>
+    base ? readBlobIfExists(root, `${base}:${path}`) : null;
   let baseDirs: Set<string> | undefined;
   const ctx: CompareContext = {
-    ...createContext(
-      config,
-      mochaTestPatterns((path) =>
-        base ? readBlobIfExists(root, `${base}:${path}`) : null,
-      ),
-    ),
+    ...createContext(config, [
+      ...mochaTestPatterns(committed),
+      ...nodeTestPatterns(committed),
+    ]),
     // Only asked when a runner config is added, so the git call is rare.
     dirExisted: (dir) => {
       if (!base) return false;

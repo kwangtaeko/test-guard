@@ -23,7 +23,7 @@ const GLOB = /[*?{[]/;
 const MOCHA =
   /(?:^|[\\/])(?:_?mocha|ts-mocha|electron-mocha)(?:\.js)?(?:@\S+)?$/;
 // A command that runs another one: `npx`, `nyc`, `cross-env`, `NODE_ENV=x`.
-const RUNNER =
+export const RUNNER =
   /^(?:npx|pnpx|bunx|yarn|pnpm|npm|bun|nyc|c8|cross-env|env|dotenv|node|ts-node|tsx|[A-Za-z_]\w*=\S*)$/;
 // A spec as a path or glob, not code (`process.env.SPEC || 'x'`).
 const PATH = /^[\w./*{}[\]!?@,+~-]+$/;
@@ -33,7 +33,9 @@ export function mochaTestPatterns(
 ): string[] {
   let pkg: Record<string, unknown> = {};
   try {
-    const parsed = JSON.parse(read('package.json') ?? '{}');
+    // `trimStart` drops a byte order mark too.
+    const text = (read('package.json') ?? '{}').trimStart();
+    const parsed = JSON.parse(text);
     if (parsed && typeof parsed === 'object') pkg = parsed;
   } catch {}
   const config = CONFIG_FILES.map(read).find((text) => text !== null) ?? null;
@@ -101,7 +103,7 @@ export function mochaTestPatterns(
 
 // The paths in a spec: itself when it is one (`./test/`, `.\test`), or the
 // quoted ones in code (`process.env.SPEC || 'test/**/*.js'`).
-function pathsIn(spec: string): string[] {
+export function pathsIn(spec: string): string[] {
   const clean = (s: string) =>
     s
       .replace(/\\/g, '/')
@@ -113,7 +115,7 @@ function pathsIn(spec: string): string[] {
     .filter((s) => s !== '' && PATH.test(s));
 }
 
-function record(value: unknown): Record<string, unknown> {
+export function record(value: unknown): Record<string, unknown> {
   return value && typeof value === 'object' && !Array.isArray(value)
     ? (value as Record<string, unknown>)
     : {};
@@ -126,7 +128,7 @@ function strings(value: unknown): string[] {
     : [];
 }
 
-const unquote = (word: string) => word.replace(/^(['"])(.*)\1$/, '$2');
+export const unquote = (word: string) => word.replace(/^(['"])(.*)\1$/, '$2');
 
 // The strings given to `key` in a `.mocharc` file (JSON, YAML or JS):
 // `"spec": "test/**/*.js"`, `spec: [a, b]`, `spec:\n  - a`; YAML comments
