@@ -35,9 +35,12 @@ export function runnerTestPatterns(files: Map<string, string>): string[] {
     const read = (path: string) =>
       files.get(posix.join(path.startsWith('.mocharc') ? from : dir, path)) ??
       null;
-    const prefix = dir === '.' ? '' : `${literal(dir)}/`;
     return [...mochaTestPatterns(read), ...nodeTestPatterns(read)].map(
-      (pattern) => posix.normalize(prefix + pattern),
+      (pattern) => inDir(dir, pattern),
     );
   });
 }
+
+// A pattern relative to `dir`, as one from the repository root.
+export const inDir = (dir: string, pattern: string) =>
+  posix.normalize(dir === '.' ? pattern : `${literal(dir)}/${pattern}`);

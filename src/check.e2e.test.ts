@@ -1065,4 +1065,19 @@ describe('Mocha and node --test in sub-packages', () => {
     repo.write('test/app.js', SKIPPED);
     expect(await found()).toEqual(['TG004 test/app.js']);
   });
+
+  // Codex review: moved settings run another directory's tests.
+  it.each([
+    ['package.json', pkg({ test: 'npm run unit', unit: 'node --test' })],
+    ['.mocharc.yml', 'spec: checks\n'],
+  ])('reports %s moved to another package', async (name, text) => {
+    repo = new Repo();
+    repo.write(`packages/a/${name}`, text);
+    repo.write('packages/a/test/app.js', APP);
+    repo.write('packages/a/checks/app.js', APP);
+    repo.write('packages/b/index.js', 'exports.x = 1;\n');
+    repo.commitAll();
+    repo.git('mv', `packages/a/${name}`, `packages/b/${name}`);
+    expect(await found()).toContain(`TG005 packages/b/${name}`);
+  });
 });

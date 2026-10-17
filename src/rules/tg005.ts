@@ -1,6 +1,7 @@
 import picomatch from 'picomatch';
 import { mochaTestPatterns } from '../mocha.js';
 import { nodeTestPatterns } from '../node-test.js';
+import { inDir } from '../runner-tests.js';
 import type { RunnerConfig } from '../watched.js';
 import { yamlBlock, yamlBlockRange } from './tg006.js';
 import type { Rule, RuleFinding } from './types.js';
@@ -441,6 +442,20 @@ export const tg005: Rule = ({
 // sub-package's runner settings are read like the root's.
 const nameOf = (path: string | null) => path?.split('/').pop() ?? null;
 
+// The patterns `of` gives for the file at `path`, from the repository root,
+// so moving the file to another directory changes them too.
+function fromRoot(
+  path: string | null,
+  lines: string[],
+  of: (read: (path: string) => string | null) => string[],
+): string[] {
+  if (path === null) return [];
+  const dir = path.includes('/') ? path.slice(0, path.lastIndexOf('/')) : '.';
+  return of((p) => (p === nameOf(path) ? lines.join('\n') : null)).map((p) =>
+    inDir(dir, p),
+  );
+}
+
 // A pattern a `package.json` gave `node --test` before the change whose
 // files the patterns after it don't all reach: a sample path for each of
 // its brace choices (`test/**/*.{js,mjs}` → `test/a.js`, `test/a.mjs`, …)
@@ -453,7 +468,7 @@ function nodeNarrowed(
 ): string | undefined {
   if (nameOf(beforePath) !== 'package.json') return undefined;
   const patterns = (path: string | null, lines: string[]) =>
-    nodeTestPatterns((p) => (p === nameOf(path) ? lines.join('\n') : null));
+    fromRoot(path, lines, nodeTestPatterns);
   const now = patterns(afterPath, afterLines);
   const reached = now.length > 0 ? picomatch(now) : () => false;
   return patterns(beforePath, beforeLines).find(
@@ -488,7 +503,7 @@ function mochaNarrowed(
     return undefined;
   }
   const patterns = (path: string | null, lines: string[]) =>
-    mochaTestPatterns((p) => (p === nameOf(path) ? lines.join('\n') : null));
+    fromRoot(path, lines, mochaTestPatterns);
   const now = new Set(patterns(afterPath, afterLines));
   return patterns(beforePath, beforeLines).find((p) => !now.has(p));
 }
