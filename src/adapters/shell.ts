@@ -332,6 +332,11 @@ const BYPASS_TEXT: [RegExp, string][] = [
   [/hookspath/i, 'changing `core.hooksPath` skips test-guard’s git hook'],
   [/disableAllHooks/i, '`disableAllHooks` turns off agent hooks'],
   [
+    // git takes a unique prefix of an option (`--skip-w`, `--as`).
+    /--(?:skip-worktree|assume-unchanged)\b|\bupdate-index\b[^;&|\n]*\s--(?:sk|as)[\w-]*/,
+    'tells git to ignore changes to a file, which hides them from test-guard',
+  ],
+  [
     /\bHUSKY\s*=\s*["']?0\b|\bLEFTHOOK\s*=\s*["']?(?:0|false)\b|\bLEFTHOOK_EXCLUDE\s*=|\bSKIP\s*=(?=[^\n]*\bgit\b[^\n]*\bcommit\b)/i,
     'turns off the git hook runner that starts test-guard',
   ],

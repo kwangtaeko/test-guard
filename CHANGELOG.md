@@ -1,5 +1,27 @@
 # Changelog
 
+## Unreleased
+
+- TG010 (new): code that behaves differently under the test runner.
+  Implementation that checks for it (`process.env.VITEST`,
+  `JEST_WORKER_ID`, `PYTEST_CURRENT_TEST`, `'pytest' in sys.modules`,
+  `typeof vi !== 'undefined'`), looks for a test on its call stack or reads
+  a test file; a module that exits with success while it loads, before what
+  it defines; a test, `conftest.py` or test helper that ends the run with
+  success (`process.exit(0)`, `os._exit(0)`, `pytest.exit(…, returncode=0)`).
+  `NODE_ENV === 'test'`, Vitest's in-source tests, a script's last-line
+  exit, type declarations and runner configs are left alone. Blocked per
+  edit, and judged at commit, in CI and at Stop.
+- TG007: checks made true whatever the value are meaningless too:
+  `assert x == 4 or True`, `expect(x === 4 || true).toBe(true)` (also
+  `?? true`, `toEqual(true)`), `assertTrue(x || true)`, and an `assert`
+  inside `pytest.raises(Exception)` (also `as e`, `match=`).
+- TG005: a `conftest.py` that swaps a module in `sys.modules` or overrides
+  `TestCase.assert*`.
+- TG006: `git update-index --skip-worktree` / `--assume-unchanged`, which
+  hide changes from git and so from test-guard, are blocked in agent shell
+  commands.
+
 ## 0.4.0 - 2026-10-17
 
 Tests and assertions are judged on syntax trees, tests that can never fail

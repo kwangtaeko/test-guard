@@ -257,6 +257,58 @@ describe('TG007', () => {
     ]);
   });
 
+  // Coverage audit: checks made true whatever the value.
+  it.each([
+    ['a.test.js', ['expect(f() === 4 || true).toBe(true);']],
+    ['a.test.js', ['assert.ok(f() === 4 || true);']],
+    ['test_a.py', ['    assert f() == 4 or True']],
+    ['test_a.py', ['    with pytest.raises(Exception): assert f() == 4']],
+    [
+      'test_a.py',
+      ['    with pytest.raises(Exception):', '        assert f() == 4'],
+    ],
+    ['src/test/java/ATest.java', ['  assertTrue(f() == 4 || true);']],
+    // Red-team re-check.
+    ['a.test.js', ['expect(f() === 4 || true).toEqual(true);']],
+    ['a.test.js', ['expect(f() === 4 ?? true).toStrictEqual(true);']],
+    ['a.test.js', ['expect(f() === 4 || !0).not.toBe(false);']],
+    [
+      'test_a.py',
+      ['    with pytest.raises(Exception) as e:', '        assert f() == 4'],
+    ],
+    [
+      'test_a.py',
+      ['    with raises(Exception, match="x"):', '        assert f() == 4'],
+    ],
+    ['src/test/java/ATest.java', ['  assertTrue(f() == 4 || true, "m");']],
+  ])('%s: reports always-true %j', (path, lines) => {
+    expect(
+      check({ before: file(path, '//'), after: file(path, ...lines) }).map(
+        (f) => [f.ruleId, f.line, f.message.split(' `')[0]],
+      ),
+    ).toEqual([['TG007', 1, 'added meaningless assertion']]);
+  });
+
+  it.each([
+    ['a.test.js', 'expect(a || b).toBe(true);'],
+    ['test_a.py', '    assert f() == 4 or g() == 4'],
+    ['test_a.py', '    with pytest.raises(ValueError):'],
+  ])('%s: leaves %s alone', (path, line) => {
+    expect(
+      check({ before: file(path, '//'), after: file(path, line) }),
+    ).toEqual([]);
+  });
+
+  it('reports a meaningless assertion under a new test once', () => {
+    const path = 'test_a.py';
+    expect(
+      check({
+        before: file(path, '#'),
+        after: file(path, 'def test_z():', '    assert f() == 4 or True'),
+      }).map((f) => [f.ruleId, f.line]),
+    ).toEqual([['TG007', 2]]);
+  });
+
   it.each([
     [
       'a.test.js',
@@ -441,6 +493,18 @@ describe('TG005', () => {
       ['import pytest'],
       ['import pytest', 'def pytest_runtest_makereport(item, call):'],
       'added `pytest_* hook`',
+    ],
+    [
+      'tests/conftest.py',
+      ['import sys'],
+      ['import sys', "sys.modules['app.parse'] = FakeParse()"],
+      'added `sys.modules`',
+    ],
+    [
+      'conftest.py',
+      ['import unittest'],
+      ['import unittest', 'unittest.TestCase.assertEqual = lambda *a: None'],
+      'added `TestCase assertion override`',
     ],
     [
       'jest.config.js',

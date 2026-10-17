@@ -45,6 +45,11 @@ describe('findBypass', () => {
     'echo {} > .test-guard.json',
     'rm .test-guard.json',
     "sed -i 's/a/b/' .test-guard.json",
+    // Coverage audit: changes git then ignores.
+    'git update-index --skip-worktree tests/parse.test.js',
+    'git update-index --assume-unchanged src/parse.js',
+    'git update-index --skip-w tests/parse.test.js',
+    'git update-index --as src/parse.js',
   ])('blocks %s', (command) => {
     expect(findBypass(command)).not.toEqual([]);
   });
@@ -65,6 +70,8 @@ describe('findBypass', () => {
     'echo $TEST_GUARD_X',
     'if [ "$TEST_GUARD_X" == 1 ]; then :; fi',
     'npm test',
+    'git update-index --no-skip-worktree tests/parse.test.js',
+    'git ls-files -v',
   ])('allows %s', (command) => {
     expect(findBypass(command)).toEqual([]);
   });

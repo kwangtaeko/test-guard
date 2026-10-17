@@ -90,6 +90,15 @@ const TOKENS: Record<RunnerConfig, Token[]> = {
       re: /\bdef\s+pytest_(?!configure\b|addoption\b)\w+/,
       label: 'pytest_* hook',
     },
+    // A module swapped for every test, or the assertions themselves.
+    {
+      re: /\bsys\.modules\s*\[[^\]]+\]\s*=(?!=)|\bsys\.modules\.(?:update|setdefault|__setitem__)\s*\(|(?:patch\.dict|\.setitem)\s*\(\s*(?:sys\.modules|['"]sys\.modules['"])/,
+      label: 'sys.modules',
+    },
+    {
+      re: /\bTestCase\.(?:assert|fail)\w*\s*=(?!=)|setattr\s*\(\s*[\w.]*TestCase\s*,\s*['"](?:assert|fail)/,
+      label: 'TestCase assertion override',
+    },
   ],
   maven: [
     word('skipTests'),
