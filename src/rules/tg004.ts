@@ -1,9 +1,13 @@
 import type { Rule } from './types.js';
 
-// A test's declaration: `it('x', …)`, `test.skip(…)`, `describe(…)`,
-// `def test_x`, `@Test`, a JUnit `void testX()`.
+// A test's declaration: `it('x', …)`, `test.skip(…)`, `def test_x`,
+// `@Test`, a JUnit `void testX()`. Not a `describe`, which may hold old
+// tests.
 const DECLARATION =
-  /^\s*(?:(?:it|test|specify|describe|context|suite|xit|xdescribe|fit)(?:\.\w+)*\s*\(|(?:async\s+)?def\s+test|@(?:Test|ParameterizedTest|RepeatedTest)\b|(?:(?:public|protected|private|static|final)\s+)*void\s+\w+\s*\()/;
+  /^\s*(?:(?:it|test|specify|xit|fit)(?:\.\w+)*\s*\(|(?:async\s+)?def\s+test|@(?:Test|ParameterizedTest|RepeatedTest)\b|(?:(?:public|protected|private|static|final)\s+)*void\s+\w+\s*\()/;
+// A group of tests: a skip on it isn't one on a new test.
+const GROUP =
+  /^\s*(?:describe|context|suite|xdescribe|fdescribe)(?:\.\w+)*\s*\(/;
 // A skip marker saved under a name: `slow = pytest.mark.skipif(…)`.
 const ALIAS =
   /^\s*(\w+)\s*=\s*(?:pytest\.mark\.(?:skip|skipif|xfail)|unittest\.skip\w*)\b/;
@@ -46,12 +50,20 @@ export const tg004: Rule = ({
   let hits = fresh.filter((skip) => !rewritten.has(skip.line));
   const exempt = hits.filter((skip) => newTest(skip.line));
   const grown = after.stats.tests - (before?.stats.tests ?? 0);
-  if (before && exempt.length > 0 && grown >= exempt.length) {
+  // Not when an old test's declaration went away or changed: its test may
+  // be the one coming back skipped under a new name.
+  const kept = new Set(afterLines.map((l) => l.trim()));
+  const replaced = [...deleted].some((n) => {
+    const line = beforeLines[n - 1] ?? '';
+    return DECLARATION.test(line) && !kept.has(line.trim());
+  });
+  if (before && !replaced && exempt.length > 0 && grown >= exempt.length) {
     hits = hits.filter((skip) => !exempt.includes(skip));
   }
   // Every added skip a rewrite or on a new test, and the new tests account
   // for all the skips gained.
-  const counted = before && grown >= exempt.length ? exempt.length : 0;
+  const counted =
+    before && !replaced && grown >= exempt.length ? exempt.length : 0;
   if (hits.length === 0 && afterSkips - beforeSkips <= counted) return [];
   if (hits.length === 0) {
     return [
@@ -79,9 +91,9 @@ function statement(lines: string[], n: number): string {
   let text = '';
   let depth = 0;
   for (let i = n; i <= lines.length && i < n + 8; i++) {
-    const line = (lines[i - 1] ?? '').replace(STRINGS, '""');
-    text += line;
-    for (const ch of line) {
+    const raw = lines[i - 1] ?? '';
+    text += raw;
+    for (const ch of raw.replace(STRINGS, '""')) {
       if (ch === '(') depth++;
       else if (ch === ')') depth--;
     }
@@ -91,14 +103,17 @@ function statement(lines: string[], n: number): string {
 }
 
 // What a skip checks, without its message: `assumeTrue("why", c)` and
-// `assumeTrue(c)` are the same skip.
+// `assumeTrue(c)` are the same skip, and so are two `reason=` texts. Other
+// strings stay: `skipif("sys.platform == 'win32'")` is a condition.
+const STRING = String.raw`(?<q>['"\x60])(?:(?!\k<q>)[^\\]|\\.)*\k<q>`;
 const condition = (text: string) =>
   text
-    .replace(STRINGS, '')
-    .replace(/\s+/g, '')
-    .replace(/\(,+/g, '(')
-    .replace(/,+\)/g, ')')
-    .replace(/,{2,}/g, ',');
+    .replace(new RegExp(String.raw`(\bassume\w*\(\s*)${STRING}\s*,`, 'g'), '$1')
+    .replace(
+      new RegExp(String.raw`\b(reason|msg|message)\s*=\s*${STRING}`, 'g'),
+      '$1=',
+    )
+    .replace(/\s+/g, '');
 
 // Whether the skip on a (1-based) line belongs to a test the change added:
 // its declaration is an added line, under a name the old file didn't have.
@@ -137,6 +152,7 @@ function onNewTest(
       );
     }
     if (/^\s*@/.test(text)) return decorated(n);
+    if (GROUP.test(text)) return false;
     if (DECLARATION.test(text)) return isNew(n);
     // Inside a test: the nearest less indented line that declares one.
     const indent = (l: string) => l.length - l.trimStart().length;

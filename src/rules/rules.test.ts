@@ -1310,6 +1310,18 @@ describe('M8: false positives found in real history', () => {
       ).toContain('TG004');
     });
 
+    // Codex review: rename the old test into a skip, add a dummy for count.
+    it('still reports an old test skipped under a new name next to a dummy', () => {
+      expect(
+        ids(OLD, [
+          "it.skip('a, renamed', () => {",
+          '  expect(f()).toBe(1);',
+          '});',
+          "it('dummy', () => {});",
+        ]),
+      ).toContain('TG004');
+    });
+
     it('still reports an old test replaced by a skipped new one', () => {
       expect(
         ids(OLD, [
@@ -1415,6 +1427,138 @@ describe('M8: false positives found in real history', () => {
           java('    assertThat(s).startsWith(p);'),
         ).map(([id]) => id),
       ).toEqual(['TG007']);
+    });
+  });
+
+  // Red-team re-check of the false-positive fixes: all still reported.
+  describe('relaxations, red-team re-check', () => {
+    const ids = (path: string, from: string[], to: string[]) =>
+      change(path, from, to).map(([id]) => id);
+    const OLD = ["it('alpha', () => {", '  expect(f()).toBe(1);', '});'];
+
+    it('B1: describe.skip around old tests next to a new test', () => {
+      expect(
+        ids('a.test.js', OLD, [
+          "describe.skip('legacy', () => {",
+          ...OLD.map((l) => `  ${l}`),
+          '});',
+          "it('module loads', () => { expect(typeof f).toBe('function'); });",
+        ]),
+      ).toContain('TG004');
+    });
+
+    it('B3, B4, B5: include lists that only look wider', () => {
+      const jest = (line: string) => [`module.exports = { ${line} };`];
+      expect(
+        ids(
+          'jest.config.js',
+          jest("testMatch: ['**/*.test.ts']"),
+          jest("testMatch: ['**/*.test.ts', '!**/a.test.ts']"),
+        ),
+      ).toEqual(['TG005']);
+      expect(
+        ids(
+          'jest.config.js',
+          jest("testMatch: ['**/*.test.ts']"),
+          jest(
+            "testMatch: ['**/*.test.ts', '**/*.spec.ts'], testNamePattern: 'x'",
+          ),
+        ),
+      ).toEqual(['TG005']);
+      const vitest = (test: string, coverage: string) => [
+        'export default {',
+        '  test: {',
+        `    include: [${test}],`,
+        `    coverage: { include: [${coverage}] },`,
+        '  },',
+        '};',
+      ];
+      expect(
+        ids(
+          'vitest.config.ts',
+          vitest("'src/**/*.test.ts'", "'lib/**'"),
+          vitest("'lib/**', 'lib/x/**'", "'src/**'"),
+        ),
+      ).toContain('TG005');
+    });
+
+    it('B6: a launcher word used as a value stays', () => {
+      const pkg = (s: string) => [
+        '{',
+        '  "scripts": {',
+        `    "test": "${s}"`,
+        '  }',
+        '}',
+      ];
+      expect(
+        ids(
+          'package.json',
+          pkg('vitest run --dir nub src'),
+          pkg('vitest run --dir src'),
+        ),
+      ).toEqual(['TG005']);
+    });
+
+    it('B7: a repeated assertion on a stateful call is not a duplicate', () => {
+      expect(
+        ids(
+          'a.test.js',
+          [
+            "it('reads', () => {",
+            '  expect(it.next().value).toBe(1);',
+            '  expect(it.next().value).toBe(1);',
+            '});',
+          ],
+          ["it('reads', () => {", '  expect(it.next().value).toBe(1);', '});'],
+        ),
+      ).toEqual(['TG003']);
+    });
+
+    it('B8: an uncalled helper covers no deleted assertion', () => {
+      const java = (...body: string[]) => [
+        'import org.junit.jupiter.api.Test;',
+        'class ATest {',
+        '  @Test void a() {',
+        ...body,
+        '  }',
+        '}',
+      ];
+      expect(
+        ids(
+          'src/test/java/ATest.java',
+          java(
+            '    assertEquals(1, f());',
+            '  }',
+            '  private static void assertStuff() {',
+            '    fail();',
+            '    fail();',
+          ),
+          java('    run();'),
+        ),
+      ).toEqual(['TG003']);
+    });
+
+    it('B9: a skipif condition written as a string is a condition', () => {
+      const py = (...extra: string[]) => [
+        'import pytest',
+        ...extra,
+        'def test_a():',
+        '    assert f() == 1',
+      ];
+      expect(
+        ids(
+          'test_a.py',
+          py('@pytest.mark.skipif("sys.platform == \'win32\'")'),
+          py(
+            '@pytest.mark.skipif("True")',
+            '',
+            '@pytest.mark.skipif("True")',
+            'def test_new():',
+            '    assert g() == 2',
+            '',
+          ),
+        ),
+      ).toContain('TG004');
     });
   });
 

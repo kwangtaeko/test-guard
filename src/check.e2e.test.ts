@@ -1118,7 +1118,41 @@ describe('test files renamed with most lines edited', () => {
         "test.skip('rejects nothing",
       ),
     );
-    expect(await found()).toEqual(['TG004 test/validate.test.js']);
+    // As a rename (TG004), or, no longer alike enough, a deletion (TG001)
+    // and a new file with a skip (TG004).
+    expect(await found()).toContain('TG004 test/validate.test.js');
+  });
+
+  // Codex review: a suite swapped for boilerplate with the same shape.
+  it('still reports a suite replaced by different tests of the same shape', async () => {
+    setUp();
+    repo.write(
+      'test/validate.test.js',
+      [
+        "import { isValid } from '../src/check.js';",
+        "test('returns a value for schemaA', () => { expect(isValid(schemaA)).toBe(true); });",
+        "test('returns a value for schemaB', () => { expect(isValid(schemaB)).toBe(false); });",
+        "test('returns a value for undefined', () => { expect(isValid(undefined)).toBe(false); });",
+        '',
+      ].join('\n'),
+    );
+    expect(await found()).toEqual(['TG001 test/is-valid.test.js']);
+  });
+
+  // Red-team: same test names, old words padded in a comment, hollow bodies.
+  it('still reports a suite whose words survive only in a comment', async () => {
+    setUp();
+    repo.write(
+      'test/validate.test.js',
+      [
+        `/* ${OLD.replaceAll('\n', ' ')} */`,
+        "test('accepts a valid schema', () => { expect(typeof validate).toBe('function'); });",
+        "test('rejects a broken schema', () => { expect(typeof validate).toBe('function'); });",
+        "test('rejects nothing at all', () => { expect(typeof validate).toBe('function'); });",
+        '',
+      ].join('\n'),
+    );
+    expect(await found()).toEqual(['TG001 test/is-valid.test.js']);
   });
 
   it('still reports a deletion next to an unrelated or smaller file', async () => {

@@ -417,12 +417,21 @@ export const tg005: Rule = ({
   };
   for (const line of hunks.flatMap((hunk) => hunk.added)) {
     const text = afterLines[line - 1] ?? '';
+    // The line this one replaced, if the hunk swapped lines one for one.
+    const hunk = hunks.find((h) => h.added.includes(line));
+    const swapped =
+      hunk && hunk.added.length === hunk.deleted.length
+        ? beforeLines[(hunk.deleted[hunk.added.indexOf(line)] ?? 0) - 1]
+        : undefined;
+    // Every setting on the line counts, past an include list that grew.
     const token =
       runnerConfig === 'workflow'
         ? workflowToken(afterLines, line - 1, before)
         : outOfScope(runnerConfig, afterLines, line - 1)
           ? undefined
-          : TOKENS[runnerConfig].find((t) => t.re.test(text));
+          : TOKENS[runnerConfig].find(
+              (t) => t.re.test(text) && !widens(t, text, swapped),
+            );
     // A brand-new package.json naturally has a "test" script, and a new
     // `test:*` script next to the old ones changes nothing that ran.
     // A comma added after a sibling is no change either.
@@ -436,7 +445,6 @@ export const tg005: Rule = ({
       old !== undefined &&
       !beforeLines.some((l) => bare(l) === bare(text)) &&
       !sameRun(scriptOf(old), scriptOf(text));
-    if (token && widens(token, text, before.deleted)) continue;
     if (!token && !testScript) continue;
     findings.push({
       ruleId: 'TG005',
@@ -454,8 +462,9 @@ export const tg005: Rule = ({
 const scriptOf = (line: string | false) =>
   (line && /:\s*"((?:[^"\\]|\\.)*)"/.exec(line)?.[1]) || '';
 // Programs that only start another one (`pnpm vitest` is `vitest`).
+// Only at the start of a command (`--dir nub` keeps its value).
 const LAUNCHER =
-  /(?:^|(?<=[\s;&|(]))(?:nub\s+exec\s+--node|nub\s+run|pnpm\s+(?:exec|run)|npm\s+(?:exec|run)|yarn\s+run|bun\s+run|npx|pnpx|bunx|nub|pnpm|yarn|tsx|ts-node)\s+/g;
+  /(?<=(?:^|[;&|(])\s*)(?:nub\s+exec\s+--node|nub\s+run|pnpm\s+(?:exec|run)|npm\s+(?:exec|run)|yarn\s+run|bun\s+run|npx|pnpx|bunx|nub|pnpm|yarn|tsx|ts-node)\s+/g;
 // Options whose removal runs more tests: stopping at the first failure.
 const STOPS_EARLY = new Set([
   '--bail',
@@ -468,8 +477,15 @@ const STOPS_EARLY = new Set([
 // The same tests run: the command after another launcher, or with only an
 // option that stops at the first failure taken out.
 function sameRun(before: string, after: string): boolean {
-  const words = (s: string) =>
-    s.replace(LAUNCHER, '').trim().split(/\s+/).filter(Boolean);
+  // `npx tsx x` → `x`: launchers in a row.
+  const words = (s: string) => {
+    let bare = s;
+    for (let was = ''; was !== bare; ) {
+      was = bare;
+      bare = bare.replace(LAUNCHER, '');
+    }
+    return bare.trim().split(/\s+/).filter(Boolean);
+  };
   const a = words(before);
   const b = words(after);
   if (a.length === 0) return false;
@@ -487,16 +503,18 @@ const quoted = (line: string) =>
   [...line.matchAll(/(['"`])((?:(?!\1)[^\\]|\\.)*)\1/g)].map((m) => m[2]);
 
 // An include list that kept every entry and gained some.
-function widens(token: Token, line: string, deleted: string[]): boolean {
-  if (!INCLUDES.has(token.label)) return false;
+// The line replaced lists the same setting; no new entry is a negation
+// (`!**/a.test.ts` takes files out).
+function widens(token: Token, line: string, old: string | undefined): boolean {
+  if (!INCLUDES.has(token.label) || !old || !token.re.test(old)) return false;
+  const was = quoted(old);
   const now = new Set(quoted(line));
-  return deleted.some((old) => {
-    if (!token.re.test(old)) return false;
-    const was = quoted(old);
-    return (
-      was.length > 0 && was.every((v) => now.has(v)) && now.size > was.length
-    );
-  });
+  return (
+    was.length > 0 &&
+    was.every((v) => now.has(v)) &&
+    now.size > was.length &&
+    ![...now].some((v) => v?.startsWith('!') && !was.includes(v))
+  );
 }
 
 // The file's name (`packages/a/package.json` → `package.json`): a

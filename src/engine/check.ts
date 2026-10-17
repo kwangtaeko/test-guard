@@ -196,6 +196,51 @@ function testsNaming(
   };
 }
 
+const jaccard = (a: Set<string>, b: Set<string>) => {
+  const shared = [...a].filter((w) => b.has(w)).length;
+  return shared / (a.size + b.size - shared || 1);
+};
+
+// Test names: `it('name', …)`, `def test_name`, a JUnit `@Test … void name(`.
+function testNames(content: string): Set<string>[] {
+  const names = [
+    ...content.matchAll(
+      /\b(?:it|test|specify)(?:\.\w+)*\(\s*(['"`])((?:(?!\1).)+)\1/g,
+    ),
+  ].map((m) => m[2] ?? '');
+  names.push(
+    ...[...content.matchAll(/\bdef\s+(test\w*)/g)].map((m) => m[1] ?? ''),
+  );
+  names.push(
+    ...[...content.matchAll(/@Test\b[\s\S]{0,200}?\bvoid\s+(\w+)\s*\(/g)].map(
+      (m) => m[1] ?? '',
+    ),
+  );
+  return names.map(
+    (n) =>
+      new Set(
+        n
+          .replace(/([a-z])([A-Z])/g, '$1 $2')
+          .toLowerCase()
+          .split(/[^a-z0-9]+/)
+          .filter(Boolean),
+      ),
+  );
+}
+
+// Every old test has its own counterpart among the new ones, named mostly
+// the same (`isValid narrows …` → `validate narrows …`).
+function keepsTests(old: Set<string>[], now: Set<string>[]): boolean {
+  if (old.length === 0) return false;
+  const left = [...now];
+  return old.every((name) => {
+    const at = left.findIndex((n) => jaccard(name, n) >= 0.6);
+    if (at === -1) return false;
+    left.splice(at, 1);
+    return true;
+  });
+}
+
 // A test file deleted and another added in the same folder, with as many
 // tests and assertions or more and mostly the same words: a rename git
 // didn't see because most lines were edited (`is-valid.test.ts` →
@@ -218,12 +263,14 @@ function pairRenamedTests(
   const words = (text: string) => new Set(text.match(/[A-Za-z_]\w{2,}/g));
   const look = (path: string, content: string) => {
     const language = ctx.detect(path);
-    return language
-      ? {
-          stats: analyzeSource(path, content, language).stats,
-          words: words(content),
-        }
-      : null;
+    if (!language) return null;
+    // Words of the code, not of comments or strings an edit could pad.
+    const analysis = analyzeSource(path, content, language);
+    return {
+      stats: analysis.stats,
+      words: words(analysis.lines.join('\n')),
+      names: testNames(content),
+    };
   };
   const paired: PathChange[] = [];
   const used = new Set<PathChange>();
@@ -244,10 +291,14 @@ function pairRenamedTests(
       ) {
         continue;
       }
-      const shared = [...was.words].filter((w) => now.words.has(w)).length;
-      const score = shared / (was.words.size + now.words.size - shared);
-      if (score >= 0.6 && (!best || score > best.score))
+      const score = jaccard(was.words, now.words);
+      if (
+        score >= 0.8 &&
+        keepsTests(was.names, now.names) &&
+        (!best || score > best.score)
+      ) {
         best = { change, score };
+      }
     }
     if (!best) continue;
     used.add(best.change);

@@ -38,6 +38,8 @@ export const tg003: Rule = (input) => {
 };
 
 const squash = (s: string) => s.replace(/\s+/g, '');
+const STATEFUL =
+  /\.(?:next\w*|poll|shift|pop|read\w*|take|remove\w*|dequeue|consume|advance)\s*\(|\+\+|--/;
 const deletedLines = (input: RuleInput) =>
   new Set(input.hunks.flatMap((h) => h.deleted));
 const addedLines = (input: RuleInput) =>
@@ -51,6 +53,8 @@ function duplicates(before: Analysis, after: Analysis, input: RuleInput) {
   return [...deleted].filter((n) => {
     const line = before.lines[n - 1];
     if (!line || !isAssertionLine(language, line)) return false;
+    // Each call may see a new value (`it.next()`): not a duplicate.
+    if (STATEFUL.test(line)) return false;
     const twin = [n - 1, n + 1].some(
       (m) =>
         !deleted.has(m) && squash(before.lines[m - 1] ?? '') === squash(line),
@@ -122,12 +126,19 @@ function deletedHelpers(before: Analysis, input: RuleInput) {
     if (!m || !deleted.has(i + 1)) return;
     if (new RegExp(`\\bvoid\\s+${m[2]}\\s*\\(`).test(afterText)) return;
     const indent = m[1] ?? '';
+    let inside = 0;
     for (let n = i + 2; n <= input.beforeLines.length; n++) {
       const body = input.beforeLines[n - 1] ?? '';
+      if (body.startsWith(`${indent}}`)) break;
       if (!deleted.has(n)) return;
-      if (body.startsWith(`${indent}}`)) return;
-      if (isAssertionLine('java', before.lines[n - 1] ?? '')) credit++;
+      if (isAssertionLine('java', before.lines[n - 1] ?? '')) inside++;
     }
+    // No more than the calls it lost: an uncalled helper covers nothing.
+    const call = new RegExp(`\\b${m[2]}\\s*\\(`);
+    const calls = [...deleted].filter(
+      (n) => n !== i + 1 && call.test(before.lines[n - 1] ?? ''),
+    ).length;
+    credit += Math.min(inside, calls);
   });
   return credit;
 }
