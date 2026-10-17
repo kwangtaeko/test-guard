@@ -1,6 +1,11 @@
 # Changelog
 
-## Unreleased
+## 0.4.0 - 2026-10-17
+
+Tests and assertions are judged on syntax trees, tests that can never fail
+don't count, and TG008 follows expected values into variables, fixtures and
+expected-output files. Mocha and `node --test` test files are found, in
+monorepos too, and Gemini CLI and Probity are supported.
 
 - Node's own runner: when a root `package.json` script runs `node --test`
   (also `tsx --test`, behind `npx`, `c8`, `cross-env` and the like), the
