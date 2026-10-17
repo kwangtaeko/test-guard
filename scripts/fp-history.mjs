@@ -4,12 +4,13 @@
 // measure false positives on real history (ROADMAP §12.1 M8).
 //
 //   pnpm build
-//   node scripts/fp-history.mjs <clone> [--commits 300] [--out result.json]
+//   node scripts/fp-history.mjs <clone> [--commits 300] [--jobs 4] [--out result.json]
 //
-// The clone is checked out commit by commit and returned to its starting
-// point at the end; use a throwaway clone.
-import { execFileSync, spawnSync } from 'node:child_process';
-import { writeFileSync } from 'node:fs';
+// Commits are checked out in temporary worktrees, `--jobs` at a time; the
+// clone itself is left as it is, so runs on the same clone don't collide.
+import { execFileSync, spawn } from 'node:child_process';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -21,11 +22,12 @@ const option = (name, fallback) => {
 };
 if (!repo) {
   console.error(
-    'usage: fp-history.mjs <clone> [--commits 300] [--out result.json]',
+    'usage: fp-history.mjs <clone> [--commits 300] [--jobs 4] [--out result.json]',
   );
   process.exit(2);
 }
 const commits = Number(option('commits', '300'));
+const jobs = Math.max(1, Number(option('jobs', '4')));
 const out = option('out', null);
 const cli = join(
   dirname(fileURLToPath(import.meta.url)),
@@ -34,58 +36,97 @@ const cli = join(
   'cli.js',
 );
 
-const git = (...a) =>
-  execFileSync('git', ['-C', repo, ...a], { encoding: 'utf8' }).trim();
+const git = (dir, ...a) =>
+  execFileSync('git', ['-C', dir, ...a], { encoding: 'utf8' }).trim();
 
-const start = git('rev-parse', 'HEAD');
+const start = git(repo, 'rev-parse', 'HEAD');
+// Each commit with its parent; root commits have nothing to compare with.
 const shas = git(
+  repo,
   'rev-list',
   '--no-merges',
   '--first-parent',
+  '--parents',
   '-n',
   String(commits),
   'HEAD',
 )
   .split('\n')
-  .filter(Boolean);
+  .map((line) => line.split(' '))
+  .filter((parts) => parts.length >= 2)
+  .map(([sha]) => sha);
+
+function check(dir, sha) {
+  return new Promise((done, fail) => {
+    const child = spawn(
+      process.execPath,
+      [cli, 'check', '--base', `${sha}^`, '--json'],
+      { cwd: dir },
+    );
+    let stdout = '';
+    let stderr = '';
+    child.stdout.on('data', (d) => {
+      stdout += d;
+    });
+    child.stderr.on('data', (d) => {
+      stderr += d;
+    });
+    child.on('close', (status) => {
+      if (status !== 0 && status !== 1) {
+        fail(new Error(`${sha}: exit ${status}\n${stderr}`));
+      } else done({ status, findings: JSON.parse(stdout).findings });
+    });
+  });
+}
+
+const results = new Map();
+const temp = mkdtempSync(join(tmpdir(), 'fp-history-'));
+const trees = [];
+try {
+  for (let i = 0; i < Math.min(jobs, shas.length); i++) {
+    const tree = join(temp, `wt${i}`);
+    git(repo, 'worktree', 'add', '-q', '--detach', tree, start);
+    trees.push(tree);
+  }
+  let next = 0;
+  await Promise.all(
+    trees.map(async (tree) => {
+      while (next < shas.length) {
+        const sha = shas[next++];
+        git(tree, 'checkout', '-q', '--force', '--detach', sha);
+        results.set(sha, await check(resolve(tree), sha));
+      }
+    }),
+  );
+} finally {
+  for (const tree of trees) {
+    try {
+      git(repo, 'worktree', 'remove', '--force', tree);
+    } catch {}
+  }
+  git(repo, 'worktree', 'prune');
+  rmSync(temp, { recursive: true, force: true });
+}
 
 const flagged = [];
 const byRule = {};
-let scanned = 0;
-try {
-  for (const sha of shas) {
-    const parents = git('rev-list', '--parents', '-n', '1', sha).split(' ');
-    if (parents.length < 2) continue; // root commit
-    git('checkout', '-q', '--force', '--detach', sha);
-    const run = spawnSync(
-      process.execPath,
-      [cli, 'check', '--base', `${sha}^`, '--json'],
-      { cwd: resolve(repo), encoding: 'utf8' },
-    );
-    if (run.status !== 0 && run.status !== 1) {
-      throw new Error(`${sha}: exit ${run.status}\n${run.stderr}`);
-    }
-    scanned++;
-    const { findings } = JSON.parse(run.stdout);
-    if (findings.length === 0) continue;
-    for (const f of findings) byRule[f.ruleId] = (byRule[f.ruleId] ?? 0) + 1;
-    flagged.push({
-      sha: sha.slice(0, 10),
-      subject: git('log', '-1', '--format=%s', sha),
-      blocking: run.status === 1,
-      findings: findings.map((f) =>
-        [f.ruleId, f.path, f.line, f.message]
-          .filter((x) => x != null)
-          .join(' '),
-      ),
-    });
-  }
-} finally {
-  git('checkout', '-q', '--force', start);
+for (const sha of shas) {
+  const { status, findings } = results.get(sha);
+  if (findings.length === 0) continue;
+  for (const f of findings) byRule[f.ruleId] = (byRule[f.ruleId] ?? 0) + 1;
+  flagged.push({
+    sha: sha.slice(0, 10),
+    subject: git(repo, 'log', '-1', '--format=%s', sha),
+    blocking: status === 1,
+    findings: findings.map((f) =>
+      [f.ruleId, f.path, f.line, f.message].filter((x) => x != null).join(' '),
+    ),
+  });
 }
 
+const scanned = results.size;
 const result = {
-  repository: git('remote', 'get-url', 'origin'),
+  repository: git(repo, 'remote', 'get-url', 'origin'),
   head: start,
   scanned,
   flagged: flagged.length,

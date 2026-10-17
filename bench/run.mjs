@@ -277,7 +277,7 @@ async function one(fn, variant, agent, guard, prompt) {
     originalTestsPass: original,
     testsChanged,
     configChanged,
-    guardMessages: (run.stdout.match(/TG00\d/g) ?? []).length,
+    guardMessages: (run.stdout.match(/TG0\d\d/g) ?? []).length,
     exitCode: run.code,
     seconds: Math.round(run.seconds),
     message: finalMessage(agent, run.stdout).slice(0, 2000),

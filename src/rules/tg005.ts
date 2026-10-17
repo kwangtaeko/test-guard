@@ -90,6 +90,15 @@ const TOKENS: Record<RunnerConfig, Token[]> = {
       re: /\bdef\s+pytest_(?!configure\b|addoption\b)\w+/,
       label: 'pytest_* hook',
     },
+    // A module swapped for every test, or the assertions themselves.
+    {
+      re: /\bsys\.modules\s*\[[^\]]+\]\s*=(?!=)|\bsys\.modules\.(?:update|setdefault|__setitem__)\s*\(|(?:patch\.dict|\.setitem)\s*\(\s*(?:sys\.modules|['"]sys\.modules['"])/,
+      label: 'sys.modules',
+    },
+    {
+      re: /\bTestCase\.(?:assert|fail)\w*\s*=(?!=)|setattr\s*\(\s*[\w.]*TestCase\s*,\s*['"](?:assert|fail)/,
+      label: 'TestCase assertion override',
+    },
   ],
   maven: [
     word('skipTests'),
@@ -408,23 +417,34 @@ export const tg005: Rule = ({
   };
   for (const line of hunks.flatMap((hunk) => hunk.added)) {
     const text = afterLines[line - 1] ?? '';
+    // The line this one replaced, if the hunk swapped lines one for one.
+    const hunk = hunks.find((h) => h.added.includes(line));
+    const swapped =
+      hunk && hunk.added.length === hunk.deleted.length
+        ? beforeLines[(hunk.deleted[hunk.added.indexOf(line)] ?? 0) - 1]
+        : undefined;
+    // Every setting on the line counts, past an include list that grew.
     const token =
       runnerConfig === 'workflow'
         ? workflowToken(afterLines, line - 1, before)
         : outOfScope(runnerConfig, afterLines, line - 1)
           ? undefined
-          : TOKENS[runnerConfig].find((t) => t.re.test(text));
+          : TOKENS[runnerConfig].find(
+              (t) => t.re.test(text) && !widens(t, text, swapped),
+            );
     // A brand-new package.json naturally has a "test" script, and a new
     // `test:*` script next to the old ones changes nothing that ran.
     // A comma added after a sibling is no change either.
     const key = TEST_SCRIPT.exec(text)?.[0].replace(/\s*:$/, '');
     const bare = (l: string) => l.trim().replace(/,$/, '');
+    const old = key && beforeLines.find((l) => l.includes(key));
     const testScript =
       beforePath !== null &&
       runnerConfig === 'package.json' &&
       key !== undefined &&
-      beforeLines.some((l) => l.includes(key)) &&
-      !beforeLines.some((l) => bare(l) === bare(text));
+      old !== undefined &&
+      !beforeLines.some((l) => bare(l) === bare(text)) &&
+      !sameRun(scriptOf(old), scriptOf(text));
     if (!token && !testScript) continue;
     findings.push({
       ruleId: 'TG005',
@@ -437,6 +457,65 @@ export const tg005: Rule = ({
   }
   return findings;
 };
+
+// A script's command: `"test": "vitest run",` → `vitest run`.
+const scriptOf = (line: string | false) =>
+  (line && /:\s*"((?:[^"\\]|\\.)*)"/.exec(line)?.[1]) || '';
+// Programs that only start another one (`pnpm vitest` is `vitest`).
+// Only at the start of a command (`--dir nub` keeps its value).
+const LAUNCHER =
+  /(?<=(?:^|[;&|(])\s*)(?:nub\s+exec\s+--node|nub\s+run|pnpm\s+(?:exec|run)|npm\s+(?:exec|run)|yarn\s+run|bun\s+run|npx|pnpx|bunx|nub|pnpm|yarn|tsx|ts-node)\s+/g;
+// Options whose removal runs more tests: stopping at the first failure.
+const STOPS_EARLY = new Set([
+  '--bail',
+  '-b',
+  '--exitfirst',
+  '-x',
+  '--fail-fast',
+]);
+
+// The same tests run: the command after another launcher, or with only an
+// option that stops at the first failure taken out.
+function sameRun(before: string, after: string): boolean {
+  // `npx tsx x` → `x`: launchers in a row.
+  const words = (s: string) => {
+    let bare = s;
+    for (let was = ''; was !== bare; ) {
+      was = bare;
+      bare = bare.replace(LAUNCHER, '');
+    }
+    return bare.trim().split(/\s+/).filter(Boolean);
+  };
+  const a = words(before);
+  const b = words(after);
+  if (a.length === 0) return false;
+  let i = 0;
+  for (const word of a) {
+    if (word === b[i]) i++;
+    else if (!STOPS_EARLY.has(word)) return false;
+  }
+  return i === b.length;
+}
+
+// Settings that list what runs; growing one runs more.
+const INCLUDES = new Set(['projects', 'include', 'testMatch', 'roots', 'spec']);
+const quoted = (line: string) =>
+  [...line.matchAll(/(['"`])((?:(?!\1)[^\\]|\\.)*)\1/g)].map((m) => m[2]);
+
+// An include list that kept every entry and gained some.
+// The line replaced lists the same setting; no new entry is a negation
+// (`!**/a.test.ts` takes files out).
+function widens(token: Token, line: string, old: string | undefined): boolean {
+  if (!INCLUDES.has(token.label) || !old || !token.re.test(old)) return false;
+  const was = quoted(old);
+  const now = new Set(quoted(line));
+  return (
+    was.length > 0 &&
+    was.every((v) => now.has(v)) &&
+    now.size > was.length &&
+    ![...now].some((v) => v?.startsWith('!') && !was.includes(v))
+  );
+}
 
 // The file's name (`packages/a/package.json` → `package.json`): a
 // sub-package's runner settings are read like the root's.

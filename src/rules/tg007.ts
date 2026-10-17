@@ -117,6 +117,9 @@ const SPECS: Record<Language, Spec> = {
       /(?<![\w$.])expect\s*\(\s*(true|false|null|undefined|\d+)\s*\)\s*\.(?:toBe|toEqual|toStrictEqual)\s*\(\s*\1\s*\)/,
       /(?<![\w$.])expect\s*\(\s*true\s*\)\s*\.toBeTruthy\s*\(\s*\)/,
       /(?<![\w$.])assert(?:\.ok)?\s*\(\s*true\s*[,)]/,
+      // A check made true whatever the value: `expect(x === 4 || true)`.
+      /(?<![\w$.])expect\s*\([^;]*(?:\|\||\?\?)\s*(?:true|!0)\s*\)\s*\.(?:to(?:Strict)?(?:Be|Equal)\s*\(\s*true\s*\)|toBeTruthy\s*\(\s*\)|not\.toBe\s*\(\s*false\s*\))/,
+      /(?<![\w$.])assert(?:\.ok)?\s*\([^;]*(?:\|\||\?\?)\s*(?:true|!0)\s*[,)]/,
     ],
   },
   python: {
@@ -187,6 +190,12 @@ const SPECS: Record<Language, Spec> = {
     trivial: [
       /(?<![\w.])assert\s*\(?\s*True\s*\)?\s*(?:,|$)/,
       /(?<![\w.])self\.assertTrue\s*\(\s*True\s*[,)]/,
+      // `assert x == 4 or True`
+      /(?<![\w.])assert\b[^#]*\bor\s+True\s*(?:,|\)|$)/,
+      /(?<![\w.])self\.assertTrue\s*\([^#]*\bor\s+True\s*[,)]/,
+      // An assertion whose failure the block expects:
+      // `with pytest.raises(Exception): assert …`.
+      /\b(?:pytest\.)?raises\s*\(\s*(?:Exception|BaseException|AssertionError)\s*(?:,[^()]*)?\)\s*(?:as\s+\w+\s*)?:\s*assert\b/,
     ],
   },
   java: {
@@ -249,9 +258,37 @@ const SPECS: Record<Language, Spec> = {
     trivial: [
       /(?<![\w$])assertTrue\s*\((?:\s*"(?:\\.|[^"\\])*"\s*,)?\s*true\s*[,)]/,
       /(?<![\w$])assertFalse\s*\((?:\s*"(?:\\.|[^"\\])*"\s*,)?\s*false\s*[,)]/,
+      /(?<![\w$])assertTrue\s*\([^;]*\|\|\s*true\s*[,)]/,
     ],
   },
 };
+
+// `assertThat(s.substring(0, p.length())).isEqualTo(p)` and
+// `assertThat(s).startsWith(p)` check the same thing.
+function samePrefixCheck(strong: string, weak: string): boolean {
+  const s = strong.replace(/\s+/g, '');
+  const m =
+    /assertThat\(([\w.]+)\.substring\(0,([\w.]+)\.length\(\)\)\)\.isEqualTo\(\2\)/.exec(
+      s,
+    );
+  return (
+    m !== null &&
+    weak.replace(/\s+|;$/g, '') === `assertThat(${m[1]}).startsWith(${m[2]})`
+  );
+}
+
+// The line that opens the indented block holding line `at` (0-based), by
+// indentation, or -1.
+function enclosing(lines: string[], at: number): number {
+  const indent = (l: string) => l.length - l.trimStart().length;
+  const own = indent(lines[at] ?? '');
+  for (let i = at - 1; i >= 0; i--) {
+    const l = lines[i] ?? '';
+    if (l.trim() === '') continue;
+    if (indent(l) < own) return i;
+  }
+  return -1;
+}
 
 interface Hit {
   line: number;
@@ -399,6 +436,7 @@ export const tg007: Rule = ({
         if (weak === -1) continue;
         const [hit] = weakAdded.splice(weak, 1);
         if (!hit) continue;
+        if (samePrefixCheck(strong.text, hit.text)) continue;
         reported.add(hit.line);
         pairedPerGroup[strong.group]++;
         findings.push({
@@ -411,7 +449,19 @@ export const tg007: Rule = ({
     }
     for (const line of hunk.added) {
       if (reported.has(line)) continue;
-      const text = after.lines[line - 1] ?? '';
+      // A `with …:` is read with the line under it (`assert` inside it),
+      // and an `assert` added under an old `with …:` with that line.
+      const own = after.lines[line - 1] ?? '';
+      const opener = /^\s*assert\b/.test(own)
+        ? enclosing(after.lines, line - 1)
+        : -1;
+      const text = /^\s*with\b.*:\s*$/.test(own)
+        ? `${own} ${(after.lines[line] ?? '').trim()}`
+        : opener !== -1 &&
+            !hunk.added.includes(opener + 1) &&
+            /^\s*with\b.*:\s*$/.test(after.lines[opener] ?? '')
+          ? `${after.lines[opener]} ${own.trim()}`
+          : own;
       const match = spec.trivial.map((re) => re.exec(text)).find(Boolean);
       if (!match) continue;
       findings.push({

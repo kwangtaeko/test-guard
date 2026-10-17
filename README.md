@@ -132,11 +132,12 @@ git commit -m "test: skip flaky subtraction" -m "Test-Guard-Approved: tracked in
 | TG002 | Fewer test cases in a file (Python: only tests pytest/unittest collect, a name defined twice counts once; Java: tests in an inner class that lost `@Nested`; tests that never run, under `if (false)`, after a `return` or in an empty `each([])`/`parametrize`, don't count) |
 | TG003 | Fewer assertions in a file (assertions that can't fail don't count: inside a `try` whose `catch`/`except` ignores failures, in a `.then` followed by `.catch(() => {})`, in a helper only called that way, or in code that never runs) |
 | TG004 | Added skip / disable / focus: `it.skip`, `xit`, `.only`, `.todo`, `test.failing`, `{ skip: true }`, `this.skip()`, `@pytest.mark.skip` (also under import aliases), `xfail`, `__test__ = False`, `@Disabled`, `@Ignore`, `Assumptions.abort()`, TestNG `enabled = false`, … — and test or assertion functions replaced in the file (`const expect = …`, `expect.extend` over a built-in matcher, a local `assertEquals`, a `Test` annotation that isn't JUnit's, `vi.mock('./sum')` in `sum.test.ts`) |
-| TG005 | Test runner config tampering: `passWithNoTests`, `testPathIgnorePatterns`, `setupFiles`/`globalSetup`, pytest `addopts` with `-k`/`--deselect`/`--ignore`, `collect_ignore`, `pytest_*` hooks in `conftest.py`, Maven `skipTests`/`testFailureIgnore`/`groups`/`includes`, Gradle `enabled = false`/`ignoreFailures`/`excludeTags`; a GitHub Actions test step given `\|\| true`, `set +e`, `continue-on-error`, `if:`, `-u` or a test filter, or a test command removed from CI, … |
-| TG006 | Getting around test-guard: changing `.test-guard.json`; removing or changing the line that runs it in hook/CI files (`\|\| true`, a narrower hook matcher, `continue-on-error`); from an agent: `git commit --no-verify`, `core.hooksPath`, git aliases/includes/`GIT_CONFIG_GLOBAL`, `Test-Guard-Approved` trailers, `TEST_GUARD_*` variables, disabling or uninstalling the plugin, and writing `.git/`, `.claude/settings.local.json` or `node_modules/test-guard` |
-| TG007 | Weaker assertions: `toBe(3)` → `toBeDefined()` / `not.toBe(…)` / `toBeGreaterThan(…)`, `assertEqual` → `assertTrue` / `assertNotEqual`, `assert x == y` → `assert x != y`, `toThrow(X)` → `toThrow()`, `pytest.raises(ValueError)` → `pytest.raises(Exception)`, and meaningless ones like `expect(true).toBe(true)` or an expected value replaced with the value under test (`toBe(3)` → `toBe(add(1, 2))` under `expect(add(1, 2))`) |
+| TG005 | Test runner config tampering: `passWithNoTests`, `testPathIgnorePatterns`, `setupFiles`/`globalSetup`, pytest `addopts` with `-k`/`--deselect`/`--ignore`, `collect_ignore`, `pytest_*` hooks, `sys.modules` swaps and `TestCase.assert*` overrides in `conftest.py`, Maven `skipTests`/`testFailureIgnore`/`groups`/`includes`, Gradle `enabled = false`/`ignoreFailures`/`excludeTags`; a GitHub Actions test step given `\|\| true`, `set +e`, `continue-on-error`, `if:`, `-u` or a test filter, or a test command removed from CI, … |
+| TG006 | Getting around test-guard: changing `.test-guard.json`; removing or changing the line that runs it in hook/CI files (`\|\| true`, a narrower hook matcher, `continue-on-error`); from an agent: `git commit --no-verify`, `core.hooksPath`, git aliases/includes/`GIT_CONFIG_GLOBAL`, `Test-Guard-Approved` trailers, `TEST_GUARD_*` variables, `git update-index --skip-worktree`/`--assume-unchanged`, disabling or uninstalling the plugin, and writing `.git/`, `.claude/settings.local.json` or `node_modules/test-guard` |
+| TG007 | Weaker assertions: `toBe(3)` → `toBeDefined()` / `not.toBe(…)` / `toBeGreaterThan(…)`, `assertEqual` → `assertTrue` / `assertNotEqual`, `assert x == y` → `assert x != y`, `toThrow(X)` → `toThrow()`, `pytest.raises(ValueError)` → `pytest.raises(Exception)`, and meaningless ones like `expect(true).toBe(true)`, `assert x == 4 or True`, an `assert` inside `pytest.raises(Exception)`, or an expected value replaced with the value under test (`toBe(3)` → `toBe(add(1, 2))` under `expect(add(1, 2))`) |
 | TG008 | Expected values rewritten to match the code: an assertion whose values changed (`toBe(10)` → `toBe(11)`, or `const expected = 10` → `11` with `toBe(expected)`), a constant or pytest fixture in the test folders that tests compare with (`tests/fixtures.js`, `conftest.py`), a changed `.snap` file, inline snapshot or expected-output file (`tests/data/expected.json`, `*.golden`), while no implementation file changed. Judged at commit, in CI and when the agent stops (not per edit, so fixing a test before the code is fine); agents are also stopped from running tests with `-u` |
 | TG009 | A test input special-cased in the code: a new comparison such as `if (s === 'IV') return 4` where an existing test passes `'IV'` to the code under test and expects `4`, and the code never used that value before. Judged per edit, at commit, in CI and at Stop |
+| TG010 | Code that behaves differently under the test runner: implementation that checks for it (`process.env.VITEST`, `JEST_WORKER_ID`, `PYTEST_CURRENT_TEST`, `'pytest' in sys.modules`, `typeof vi !== 'undefined'`), looks for a test on its call stack or reads a test file, a module that exits with success when loaded, and a test file that ends the process. Judged per edit, at commit, in CI and at Stop |
 
 Languages: TypeScript/JavaScript (Jest, Vitest, Mocha, `node --test`), Python (pytest,
 unittest) and Java (JUnit 4/5).
@@ -320,25 +321,27 @@ from fixing it. Small samples; details and caveats in
 
 `scripts/fp-history.mjs` runs `test-guard check` on each commit of a
 repository against its parent. On the last 300 commits of four projects
-(cloned 2026-10-06, measured 2026-10-13):
+(cloned 2026-10-06, measured 2026-10-17):
 
 | Repository | Stack | Commits stopped | Didn't weaken anything |
 |---|---|---|---|
-| expressjs/express | JS, Mocha | 26 (8.7%) | 4 |
-| pallets/flask | Python, pytest | 3 (1.0%) | 0 |
-| google/gson | Java, JUnit | 13 (4.3%) | 5 |
-| colinhacks/zod | TS, Vitest | 11 (3.7%) | 2 |
-| **Total** | | **53 / 1,200 (4.4%)** | **11 (0.9%)** |
+| expressjs/express | JS, Mocha | 24 (8.0%) | 2 |
+| pallets/flask | Python, pytest | 2 (0.7%) | 0 |
+| google/gson | Java, JUnit | 9 (3.0%) | 2 |
+| colinhacks/zod | TS, Vitest | 7 (2.3%) | 2 |
+| **Total** | | **42 / 1,200 (3.5%)** | **6 (0.5%)** |
 
-42 of the 53 really removed, skipped or weakened tests (a feature dropped
-with its tests, as Express 5 removed old signatures, a test marked `@Ignore`,
-`skipif` or `describe.skip`, `assertThrows(Specific.class)` loosened on
-purpose); people make these changes too, and they pass with one approval.
-The other 11 didn't weaken anything: assertions merged into one, `try/fail`
-moved to `assertThrows`, a test replaced by a new file, duplicate tests
-removed, new tests added already skipped, a wrapper added to the `test`
-script. None was a wrong reading of the code. Express's tests (`test/*.js`)
-have no `.test.` in their names; they are found from its Mocha settings. To
+36 of the 42 really removed, skipped or weakened tests (a feature dropped
+with its tests, as Express 5 removed old signatures, a test marked `@Ignore`
+or `describe.skip`, a check loosened on purpose); people make these changes
+too, and they pass with one approval. Each of the 42 was classified from
+its diff. The
+other 6 didn't weaken anything: duplicate tests removed, new tests wrapped
+in a conditional skip alias, a test rewritten and moved to another file, a
+test moved to an integration-test file another plugin runs, a CI workflow
+deleted while the same test step runs elsewhere, and assertions rewritten
+for a spec change. Express's tests (`test/*.js`) have no `.test.` in their
+names; they are found from its Mocha settings. To
 reproduce:
 
 ```bash

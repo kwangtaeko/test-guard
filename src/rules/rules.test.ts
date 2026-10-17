@@ -72,6 +72,24 @@ describe('TG001', () => {
       }),
     ).toEqual([]);
   });
+
+  // FP history (zod ce1e11b7): a script that only borrowed a test's name.
+  it('accepts deleting a file named like a test with nothing of one', () => {
+    const script = file('meta.test.mjs', 'const a = load(x);', 'run(a);');
+    expect(check({ before: script, after: null })).toEqual([]);
+    expect(
+      check({ before: script, after: file('meta.mjs', 'run(1);') }),
+    ).toEqual([]);
+  });
+
+  it('still reports a test file whose tests it cannot count', () => {
+    expect(
+      check({
+        before: file('a.test.js', "tape('adds', (t) => { t.end(); });"),
+        after: null,
+      }).map((f) => f.ruleId),
+    ).toEqual(['TG001']);
+  });
 });
 
 describe('TG002 / TG003', () => {
@@ -255,6 +273,77 @@ describe('TG007', () => {
         message: `added meaningless assertion \`${text}\``,
       },
     ]);
+  });
+
+  // Coverage audit: checks made true whatever the value.
+  it.each([
+    ['a.test.js', ['expect(f() === 4 || true).toBe(true);']],
+    ['a.test.js', ['assert.ok(f() === 4 || true);']],
+    ['test_a.py', ['    assert f() == 4 or True']],
+    ['test_a.py', ['    with pytest.raises(Exception): assert f() == 4']],
+    [
+      'test_a.py',
+      ['    with pytest.raises(Exception):', '        assert f() == 4'],
+    ],
+    ['src/test/java/ATest.java', ['  assertTrue(f() == 4 || true);']],
+    // Red-team re-check.
+    ['a.test.js', ['expect(f() === 4 || true).toEqual(true);']],
+    ['a.test.js', ['expect(f() === 4 ?? true).toStrictEqual(true);']],
+    ['a.test.js', ['expect(f() === 4 || !0).not.toBe(false);']],
+    [
+      'test_a.py',
+      ['    with pytest.raises(Exception) as e:', '        assert f() == 4'],
+    ],
+    [
+      'test_a.py',
+      ['    with raises(Exception, match="x"):', '        assert f() == 4'],
+    ],
+    ['src/test/java/ATest.java', ['  assertTrue(f() == 4 || true, "m");']],
+  ])('%s: reports always-true %j', (path, lines) => {
+    expect(
+      check({ before: file(path, '//'), after: file(path, ...lines) }).map(
+        (f) => [f.ruleId, f.line, f.message.split(' `')[0]],
+      ),
+    ).toEqual([['TG007', 1, 'added meaningless assertion']]);
+  });
+
+  it.each([
+    ['a.test.js', 'expect(a || b).toBe(true);'],
+    ['test_a.py', '    assert f() == 4 or g() == 4'],
+    ['test_a.py', '    with pytest.raises(ValueError):'],
+  ])('%s: leaves %s alone', (path, line) => {
+    expect(
+      check({ before: file(path, '//'), after: file(path, line) }),
+    ).toEqual([]);
+  });
+
+  // Codex review: an old broad `raises` block with a new assert inside.
+  it('reports an assert added under an old pytest.raises(Exception)', () => {
+    const path = 'test_a.py';
+    const block = (body: string) =>
+      file(
+        path,
+        'def test_x():',
+        '    with pytest.raises(Exception):',
+        '        f(None)',
+        body,
+      );
+    expect(
+      check({
+        before: block('        g()'),
+        after: block('        assert f() == 5'),
+      }).map((f) => [f.ruleId, f.line]),
+    ).toEqual([['TG007', 4]]);
+  });
+
+  it('reports a meaningless assertion under a new test once', () => {
+    const path = 'test_a.py';
+    expect(
+      check({
+        before: file(path, '#'),
+        after: file(path, 'def test_z():', '    assert f() == 4 or True'),
+      }).map((f) => [f.ruleId, f.line]),
+    ).toEqual([['TG007', 2]]);
   });
 
   it.each([
@@ -441,6 +530,18 @@ describe('TG005', () => {
       ['import pytest'],
       ['import pytest', 'def pytest_runtest_makereport(item, call):'],
       'added `pytest_* hook`',
+    ],
+    [
+      'tests/conftest.py',
+      ['import sys'],
+      ['import sys', "sys.modules['app.parse'] = FakeParse()"],
+      'added `sys.modules`',
+    ],
+    [
+      'conftest.py',
+      ['import unittest'],
+      ['import unittest', 'unittest.TestCase.assertEqual = lambda *a: None'],
+      'added `TestCase assertion override`',
     ],
     [
       'jest.config.js',
@@ -1051,6 +1152,436 @@ describe('M8: false positives found in real history', () => {
     check({ before: file(path, ...from), after: file(path, ...to) }).map(
       (f) => [f.ruleId, f.message],
     );
+
+  // express 6340d150, zod e4d67f3e / fa77a4d7: the same or more tests run.
+  it.each([
+    [
+      'mocha --reporter spec --bail --check-leaks test/',
+      'mocha --reporter spec --check-leaks test/',
+    ],
+    ['pnpm vitest run', 'nub exec --node vitest run'],
+    ['vitest run', 'npx vitest run'],
+    ['pnpm a && pnpm b', 'nub run a && nub run b'],
+  ])('accepts the test script %j → %j', (from, to) => {
+    const pkg = (s: string) => [
+      '{',
+      '  "scripts": {',
+      `    "test": "${s}"`,
+      '  }',
+      '}',
+    ];
+    expect(change('package.json', pkg(from), pkg(to))).toEqual([]);
+  });
+
+  it.each([
+    ['vitest run', 'nub exec --node vitest run -t parse'],
+    ['mocha test/ test/acceptance/', 'mocha test/'],
+    ['vitest run', 'vitest run --bail'],
+  ])('reports the test script %j → %j', (from, to) => {
+    const pkg = (s: string) => [
+      '{',
+      '  "scripts": {',
+      `    "test": "${s}"`,
+      '  }',
+      '}',
+    ];
+    expect(change('package.json', pkg(from), pkg(to)).length).toBeGreaterThan(
+      0,
+    );
+  });
+
+  it('accepts a projects list that only grows', () => {
+    const config = (list: string) => [
+      'export default {',
+      '  test: {',
+      `    projects: [${list}],`,
+      '  },',
+      '};',
+    ];
+    expect(
+      change(
+        'vitest.config.ts',
+        config('"packages/*"'),
+        config('"packages/*", "./vitest.compile.config.ts"'),
+      ),
+    ).toEqual([]);
+    expect(
+      change(
+        'vitest.config.ts',
+        config('"packages/*", "./e2e"'),
+        config('"packages/*", "./other"'),
+      ).map(([id]) => id),
+    ).toEqual(['TG005']);
+  });
+
+  // express ae6dd376, flask 8efea0cc: a skip on a test added in the change.
+  describe('skips on new tests', () => {
+    const OLD = ["it('a', () => {", '  expect(f()).toBe(1);', '});'];
+    const NEW = [
+      "it('b on new runtimes', function () {",
+      '  if (old) {',
+      '    this.skip();',
+      '  }',
+      '  expect(g()).toBe(2);',
+      '});',
+    ];
+    const ids = (from: string[], to: string[]) =>
+      change('a.test.js', from, to).map(([id]) => id);
+
+    it('accepts a skip inside a new test', () => {
+      expect(ids(OLD, [...OLD, ...NEW])).toEqual([]);
+    });
+
+    it('accepts a new test under a new skip decorator alias', () => {
+      const py = (...extra: string[]) => [
+        'import pytest',
+        ...extra,
+        'def test_a():',
+        '    assert f() == 1',
+      ];
+      const alias = 'needs_gc = pytest.mark.skipif(not CPYTHON, reason="gc")';
+      expect(
+        change(
+          'test_a.py',
+          py(),
+          py(
+            alias,
+            '',
+            '@needs_gc',
+            'def test_freed():',
+            '    assert g() is None',
+            '',
+          ),
+        ),
+      ).toEqual([]);
+      // The alias on an old test still counts.
+      expect(
+        change('test_a.py', py(), [
+          'import pytest',
+          alias,
+          '@needs_gc',
+          'def test_a():',
+          '    assert f() == 1',
+        ]).map(([id]) => id),
+      ).toContain('TG004');
+    });
+
+    // gson ed99017a.
+    it('accepts a message added to an old assume, and one on a new test', () => {
+      const java = (...body: string[]) => [
+        'class PathTest {',
+        '  @Test',
+        '  public void topLevel() {',
+        ...body,
+        '  }',
+        '}',
+      ];
+      const path = 'src/test/java/PathTest.java';
+      const old = '    assumeTrue(factory == STRING);';
+      const why = [
+        '    assumeTrue(',
+        '        "only JsonReader", factory == STRING);',
+      ];
+      const extra = [
+        '  }',
+        '  @Test',
+        '  public void unquotedNumber() {',
+        '    assumeTrue("only JsonReader", factory == STRING);',
+        '    assertThat(read()).isEqualTo(1);',
+      ];
+      expect(change(path, java(old), java(...why, ...extra))).toEqual([]);
+      // An assume put into the old test is still a skip.
+      expect(
+        change(path, java('    run();'), java(old, '    run();', ...extra)).map(
+          ([id]) => id,
+        ),
+      ).toContain('TG004');
+    });
+
+    it('still reports a skip added inside an old test', () => {
+      expect(
+        ids(OLD, [
+          "it('a', function () {",
+          '  this.skip();',
+          '  expect(f()).toBe(1);',
+          '});',
+          "it('dummy', () => {});",
+        ]),
+      ).toContain('TG004');
+    });
+
+    // Codex review: rename the old test into a skip, add a dummy for count.
+    it('still reports an old test skipped under a new name next to a dummy', () => {
+      expect(
+        ids(OLD, [
+          "it.skip('a, renamed', () => {",
+          '  expect(f()).toBe(1);',
+          '});',
+          "it('dummy', () => {});",
+        ]),
+      ).toContain('TG004');
+    });
+
+    it('still reports an old test replaced by a skipped new one', () => {
+      expect(
+        ids(OLD, [
+          "it.skip('a again', () => {",
+          '  expect(f()).toBe(1);',
+          '});',
+        ]),
+      ).toContain('TG004');
+    });
+  });
+
+  // gson 99cc4cb1 / 2bcaaed8: the same checks, written another way.
+  describe('equal or stronger rewrites (Java)', () => {
+    const path = 'src/test/java/ATest.java';
+    const java = (...body: string[]) => [
+      'import org.junit.jupiter.api.Test;',
+      'class ATest {',
+      '  @Test void a() {',
+      ...body,
+      '  }',
+      ...[],
+      '}',
+    ];
+
+    it('counts throw new AssertionError like fail()', () => {
+      expect(
+        change(
+          path,
+          java('    fail();'),
+          java('    throw new AssertionError("x");'),
+        ),
+      ).toEqual([]);
+    });
+
+    it('accepts several contains merged into one exact comparison', () => {
+      const from = java(
+        '    assertThat(json).contains("year");',
+        '    assertThat(json).contains("month");',
+        '    assertThat(json).contains("day");',
+      );
+      const to = java(
+        '    assertThat(json).isEqualTo("{\\"year\\":1,\\"month\\":2,\\"day\\":3}");',
+      );
+      expect(change(path, from, to)).toEqual([]);
+      // Not when the exact value leaves one out, or checks something else.
+      expect(
+        change(
+          path,
+          from,
+          java('    assertThat(json).isEqualTo("{\\"year\\":1}");'),
+        ),
+      ).toEqual([['TG003', 'assertions 3 → 1']]);
+      expect(
+        change(
+          path,
+          from,
+          java('    assertThat(other).isEqualTo("year month day");'),
+        ),
+      ).toEqual([['TG003', 'assertions 3 → 1']]);
+    });
+
+    it('accepts an assert helper deleted with its calls rewritten', () => {
+      const helper = [
+        '  }',
+        '  private static void assertHas(String s, String part) {',
+        '    if (!s.contains(part)) {',
+        '      fail(s);',
+        '    }',
+      ];
+      expect(
+        change(
+          path,
+          java('    assertHas(a, "x");', ...helper),
+          java('    assertThat(a).contains("x");'),
+        ),
+      ).toEqual([]);
+      // Hollowed out but kept: still a loss.
+      expect(
+        change(
+          path,
+          java('    assertHas(a, "x");', ...helper),
+          java(
+            '    assertHas(a, "x");',
+            '  }',
+            '  private static void assertHas(String s, String part) {',
+          ),
+        ).map(([id]) => id),
+      ).toEqual(['TG003']);
+    });
+
+    it('accepts substring(0, p.length()).isEqualTo(p) → startsWith(p)', () => {
+      expect(
+        change(
+          path,
+          java('    assertThat(s.substring(0, p.length())).isEqualTo(p);'),
+          java('    assertThat(s).startsWith(p);'),
+        ),
+      ).toEqual([]);
+      expect(
+        change(
+          path,
+          java('    assertThat(s.substring(0, 3)).isEqualTo(p);'),
+          java('    assertThat(s).startsWith(p);'),
+        ).map(([id]) => id),
+      ).toEqual(['TG007']);
+    });
+  });
+
+  // Red-team re-check of the false-positive fixes: all still reported.
+  describe('relaxations, red-team re-check', () => {
+    const ids = (path: string, from: string[], to: string[]) =>
+      change(path, from, to).map(([id]) => id);
+    const OLD = ["it('alpha', () => {", '  expect(f()).toBe(1);', '});'];
+
+    it('B1: describe.skip around old tests next to a new test', () => {
+      expect(
+        ids('a.test.js', OLD, [
+          "describe.skip('legacy', () => {",
+          ...OLD.map((l) => `  ${l}`),
+          '});',
+          "it('module loads', () => { expect(typeof f).toBe('function'); });",
+        ]),
+      ).toContain('TG004');
+    });
+
+    it('B3, B4, B5: include lists that only look wider', () => {
+      const jest = (line: string) => [`module.exports = { ${line} };`];
+      expect(
+        ids(
+          'jest.config.js',
+          jest("testMatch: ['**/*.test.ts']"),
+          jest("testMatch: ['**/*.test.ts', '!**/a.test.ts']"),
+        ),
+      ).toEqual(['TG005']);
+      expect(
+        ids(
+          'jest.config.js',
+          jest("testMatch: ['**/*.test.ts']"),
+          jest(
+            "testMatch: ['**/*.test.ts', '**/*.spec.ts'], testNamePattern: 'x'",
+          ),
+        ),
+      ).toEqual(['TG005']);
+      const vitest = (test: string, coverage: string) => [
+        'export default {',
+        '  test: {',
+        `    include: [${test}],`,
+        `    coverage: { include: [${coverage}] },`,
+        '  },',
+        '};',
+      ];
+      expect(
+        ids(
+          'vitest.config.ts',
+          vitest("'src/**/*.test.ts'", "'lib/**'"),
+          vitest("'lib/**', 'lib/x/**'", "'src/**'"),
+        ),
+      ).toContain('TG005');
+    });
+
+    it('B6: a launcher word used as a value stays', () => {
+      const pkg = (s: string) => [
+        '{',
+        '  "scripts": {',
+        `    "test": "${s}"`,
+        '  }',
+        '}',
+      ];
+      expect(
+        ids(
+          'package.json',
+          pkg('vitest run --dir nub src'),
+          pkg('vitest run --dir src'),
+        ),
+      ).toEqual(['TG005']);
+    });
+
+    it('B7: a repeated assertion on a stateful call is not a duplicate', () => {
+      expect(
+        ids(
+          'a.test.js',
+          [
+            "it('reads', () => {",
+            '  expect(it.next().value).toBe(1);',
+            '  expect(it.next().value).toBe(1);',
+            '});',
+          ],
+          ["it('reads', () => {", '  expect(it.next().value).toBe(1);', '});'],
+        ),
+      ).toEqual(['TG003']);
+    });
+
+    it('B8: an uncalled helper covers no deleted assertion', () => {
+      const java = (...body: string[]) => [
+        'import org.junit.jupiter.api.Test;',
+        'class ATest {',
+        '  @Test void a() {',
+        ...body,
+        '  }',
+        '}',
+      ];
+      expect(
+        ids(
+          'src/test/java/ATest.java',
+          java(
+            '    assertEquals(1, f());',
+            '  }',
+            '  private static void assertStuff() {',
+            '    fail();',
+            '    fail();',
+          ),
+          java('    run();'),
+        ),
+      ).toEqual(['TG003']);
+    });
+
+    it('B9: a skipif condition written as a string is a condition', () => {
+      const py = (...extra: string[]) => [
+        'import pytest',
+        ...extra,
+        'def test_a():',
+        '    assert f() == 1',
+      ];
+      expect(
+        ids(
+          'test_a.py',
+          py('@pytest.mark.skipif("sys.platform == \'win32\'")'),
+          py(
+            '@pytest.mark.skipif("True")',
+            '',
+            '@pytest.mark.skipif("True")',
+            'def test_new():',
+            '    assert g() == 2',
+            '',
+          ),
+        ),
+      ).toContain('TG004');
+    });
+  });
+
+  // gson 11daec5f: an identical assertion on the next line removed.
+  it('accepts removing one of two identical neighbouring assertions', () => {
+    const path = 'src/test/java/ATest.java';
+    const body = (...asserts: string[]) => [
+      'class ATest {',
+      '  @Test public void a() {',
+      ...asserts,
+      '  }',
+      '}',
+    ];
+    const one = '    assertThat(list).containsExactly(1);';
+    expect(change(path, body(one, one), body(one))).toEqual([]);
+    // Different neighbours, or both copies gone, still count.
+    expect(
+      change(path, body(one, '    assertThat(x).isTrue();'), body(one)),
+    ).toEqual([['TG003', 'assertions 2 → 1']]);
+    expect(change(path, body(one, one), body())).toEqual([
+      ['TG003', 'assertions 2 → 0'],
+    ]);
+  });
   const STEPS = [
     'jobs:',
     '  test:',

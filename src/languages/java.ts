@@ -148,6 +148,13 @@ function helper(node: Node): Helper | null {
   };
 }
 
+function within(node: Node, types: string[]): boolean {
+  for (let p = node.parent; p; p = p.parent) {
+    if (types.includes(p.type)) return true;
+  }
+  return false;
+}
+
 function count(root: Node): Counts {
   // JUnit 4's `@Test` (and no JUnit 5): test methods must be public.
   const imports = descendants(root, ['import_declaration']).map((i) => i.text);
@@ -165,6 +172,13 @@ function count(root: Node): Counts {
     // `assert (x)` reads like a call.
     ...descendants(root, ['assert_statement']).filter((s) =>
       /^assert\s*\(/.test(s.text),
+    ),
+    // `throw new AssertionError(…)` fails the test like `fail(…)`; not in a
+    // lambda or anonymous class the test may never call.
+    ...descendants(root, ['throw_statement']).filter(
+      (s) =>
+        /^throw\s+new\s+(?:java\.lang\.)?AssertionError\s*\(/.test(s.text) &&
+        !within(s, ['lambda_expression', 'object_creation_expression']),
     ),
   ];
   return {

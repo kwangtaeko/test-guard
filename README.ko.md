@@ -130,11 +130,12 @@ git commit -m "test: skip flaky subtraction" -m "Test-Guard-Approved: tracked in
 | TG002 | 파일의 테스트 케이스 수 감소 (Python: pytest/unittest가 실제로 수집하는 테스트만, 같은 이름을 두 번 정의하면 하나로 계산; Java: `@Nested`가 빠진 내부 클래스의 테스트; `if (false)` 안, `return` 뒤, 빈 `each([])`/`parametrize`처럼 실행되지 않는 테스트는 세지 않음) |
 | TG003 | 파일의 assertion 수 감소 (실패할 수 없는 assertion은 세지 않음: 실패를 무시하는 `catch`/`except`가 감싼 `try` 안, `.catch(() => {})`로 끝나는 `.then` 안, 그렇게만 호출되는 헬퍼 안, 실행되지 않는 코드 안) |
 | TG004 | skip / disable / focus 추가: `it.skip`, `xit`, `.only`, `.todo`, `test.failing`, `{ skip: true }`, `this.skip()`, `@pytest.mark.skip`(import 별칭 포함), `xfail`, `__test__ = False`, `@Disabled`, `@Ignore`, `Assumptions.abort()`, TestNG `enabled = false` 등 — 그리고 파일 안에서 테스트·assertion 함수를 바꿔치기한 경우(`const expect = …`, 기본 matcher를 덮어쓰는 `expect.extend`, 로컬 `assertEquals`, JUnit이 아닌 `Test` 어노테이션, `sum.test.ts`의 `vi.mock('./sum')`) |
-| TG005 | 테스트 러너 설정 변조: `passWithNoTests`, `testPathIgnorePatterns`, `setupFiles`/`globalSetup`, pytest `addopts`의 `-k`/`--deselect`/`--ignore`, `collect_ignore`, `conftest.py`의 `pytest_*` 훅, Maven `skipTests`/`testFailureIgnore`/`groups`/`includes`, Gradle `enabled = false`/`ignoreFailures`/`excludeTags`, GitHub Actions 테스트 스텝에 붙인 `\|\| true`·`set +e`·`continue-on-error`·`if:`·`-u`·테스트 필터, CI에서 테스트 명령 삭제 등 |
-| TG006 | test-guard 우회: `.test-guard.json` 변경; 훅·CI 파일에서 test-guard를 실행하는 줄의 삭제·변경(`\|\| true`, 훅 matcher 축소, `continue-on-error`); 에이전트의 `git commit --no-verify`, `core.hooksPath`, git alias·include·`GIT_CONFIG_GLOBAL`, `Test-Guard-Approved` 트레일러, `TEST_GUARD_*` 변수, 플러그인 비활성화·제거, `.git/`·`.claude/settings.local.json`·`node_modules/test-guard` 쓰기 |
-| TG007 | assertion 약화: `toBe(3)` → `toBeDefined()` / `not.toBe(…)` / `toBeGreaterThan(…)`, `assertEqual` → `assertTrue` / `assertNotEqual`, `assert x == y` → `assert x != y`, `toThrow(X)` → `toThrow()`, `pytest.raises(ValueError)` → `pytest.raises(Exception)`, 그리고 `expect(true).toBe(true)` 같은 의미 없는 assertion이나 기대값을 피검 값으로 바꾼 assertion(`expect(add(1, 2))` 아래 `toBe(3)` → `toBe(add(1, 2))`) |
+| TG005 | 테스트 러너 설정 변조: `passWithNoTests`, `testPathIgnorePatterns`, `setupFiles`/`globalSetup`, pytest `addopts`의 `-k`/`--deselect`/`--ignore`, `collect_ignore`, `conftest.py`의 `pytest_*` 훅·`sys.modules` 바꿔치기·`TestCase.assert*` 덮어쓰기, Maven `skipTests`/`testFailureIgnore`/`groups`/`includes`, Gradle `enabled = false`/`ignoreFailures`/`excludeTags`, GitHub Actions 테스트 스텝에 붙인 `\|\| true`·`set +e`·`continue-on-error`·`if:`·`-u`·테스트 필터, CI에서 테스트 명령 삭제 등 |
+| TG006 | test-guard 우회: `.test-guard.json` 변경; 훅·CI 파일에서 test-guard를 실행하는 줄의 삭제·변경(`\|\| true`, 훅 matcher 축소, `continue-on-error`); 에이전트의 `git commit --no-verify`, `core.hooksPath`, git alias·include·`GIT_CONFIG_GLOBAL`, `Test-Guard-Approved` 트레일러, `TEST_GUARD_*` 변수, `git update-index --skip-worktree`/`--assume-unchanged`, 플러그인 비활성화·제거, `.git/`·`.claude/settings.local.json`·`node_modules/test-guard` 쓰기 |
+| TG007 | assertion 약화: `toBe(3)` → `toBeDefined()` / `not.toBe(…)` / `toBeGreaterThan(…)`, `assertEqual` → `assertTrue` / `assertNotEqual`, `assert x == y` → `assert x != y`, `toThrow(X)` → `toThrow()`, `pytest.raises(ValueError)` → `pytest.raises(Exception)`, 그리고 `expect(true).toBe(true)`, `assert x == 4 or True`, `pytest.raises(Exception)` 안의 `assert` 같은 의미 없는 assertion이나 기대값을 피검 값으로 바꾼 assertion(`expect(add(1, 2))` 아래 `toBe(3)` → `toBe(add(1, 2))`) |
 | TG008 | 코드에 맞춰 바꾼 기대값: 구현 파일은 그대로인데 assertion의 값이 바뀜(`toBe(10)` → `toBe(11)`, 또는 `toBe(expected)`의 `const expected = 10` → `11`), `.snap` 파일이나 인라인 스냅샷이 바뀜. 커밋·CI·에이전트 종료 시점에 판정합니다(편집마다 판정하지 않으므로 테스트를 먼저 고치고 코드를 나중에 고쳐도 됩니다). 에이전트가 `-u`로 테스트를 돌리는 것도 막습니다 |
 | TG009 | 테스트 입력을 코드에 박아 넣기: 기존 테스트가 테스트 대상에 넘기는 값(`'IV'`)을, 그 값을 쓴 적 없는 구현 코드가 새로 비교하고 바로 그 테스트의 기대값을 내놓는 경우(`if (s === 'IV') return 4`). 편집할 때, 커밋, CI, 종료 시점에 판정합니다 |
+| TG010 | 테스트 러너 아래에서만 다르게 동작하는 코드: 러너를 확인하는 구현(`process.env.VITEST`, `JEST_WORKER_ID`, `PYTEST_CURRENT_TEST`, `'pytest' in sys.modules`, `typeof vi !== 'undefined'`), 호출 스택에서 테스트를 찾거나 테스트 파일을 읽는 구현, 불러올 때 성공 코드로 프로세스를 끝내는 모듈, 프로세스를 끝내는 테스트 파일. 편집할 때, 커밋, CI, 종료 시점에 판정합니다 |
 
 지원 언어: TypeScript/JavaScript(Jest, Vitest, Mocha), Python(pytest, unittest),
 Java(JUnit 4/5).
@@ -307,21 +308,21 @@ Codex에 줍니다. 통과시키려면 테스트를 바꾸거나 코드를 틀�
 ## 실제 이력에서의 오탐
 
 `scripts/fp-history.mjs`는 저장소의 커밋마다 부모 커밋과 비교해 `test-guard check`를 돌립니다.
-네 프로젝트의 최근 커밋 300개씩에 돌린 결과입니다 (2026-10-06):
+네 프로젝트의 최근 커밋 300개씩에 돌린 결과입니다(2026-10-06 복제, 2026-10-17 측정):
 
 | 저장소 | 스택 | 막힌 커밋 | 실제로는 약화가 아닌 것 |
 |---|---|---|---|
-| expressjs/express | JS, Mocha | 1 (0.3%) | 1 |
-| pallets/flask | Python, pytest | 3 (1.0%) | 0 |
-| google/gson | Java, JUnit | 13 (4.3%) | 5 |
-| colinhacks/zod | TS, Vitest | 11 (3.7%) | 2 |
-| **합계** | | **28 / 1,200 (2.3%)** | **8 (0.7%)** |
+| expressjs/express | JS, Mocha | 24 (8.0%) | 2 |
+| pallets/flask | Python, pytest | 2 (0.7%) | 0 |
+| google/gson | Java, JUnit | 9 (3.0%) | 2 |
+| colinhacks/zod | TS, Vitest | 7 (2.3%) | 2 |
+| **합계** | | **42 / 1,200 (3.5%)** | **6 (0.5%)** |
 
-28개 중 20개는 실제로 테스트를 지우거나 skip하거나 약화한 커밋입니다(기능 제거, `@Ignore`·`skipif`
-추가, 의도적으로 느슨하게 바꾼 `assertThrows(Specific.class)` 등). 사람도 이런 변경을 하며, 한 번
-승인하면 통과합니다. 나머지 8개는 약화가 아니었습니다: 여러 assertion을 하나로 합침, `try/fail`을
-`assertThrows`로 바꿈, 테스트를 새 파일로 대체, `test` 스크립트에 래퍼 추가. 코드를 잘못 읽은 경우는
-없었습니다. 재현:
+42개 중 36개는 실제로 테스트를 지우거나 skip하거나 약화한 커밋입니다(기능과 함께 테스트 제거, `@Ignore`·`describe.skip`
+추가, 의도적으로 느슨하게 바꾼 검사 등). 사람도 이런 변경을 하며, 한 번 승인하면 통과합니다. 42개 모두
+diff를 보고 분류했습니다. 나머지 6개는 약화가 아니었습니다: 중복 테스트 삭제, 새 테스트를 조건부 skip 별칭으로 감쌈, 테스트를
+다시 써서 다른 파일로 옮김, 다른 플러그인이 돌리는 통합 테스트 파일로 옮김, 같은 테스트 단계가 다른 곳에서 도는 CI
+워크플로 삭제, 명세 변경에 맞춰 assertion을 다시 씀. 재현:
 
 ```bash
 pnpm build
