@@ -1214,6 +1214,81 @@ describe('M8: false positives found in real history', () => {
     ).toEqual(['TG005']);
   });
 
+  // express ae6dd376, flask 8efea0cc: a skip on a test added in the change.
+  describe('skips on new tests', () => {
+    const OLD = ["it('a', () => {", '  expect(f()).toBe(1);', '});'];
+    const NEW = [
+      "it('b on new runtimes', function () {",
+      '  if (old) {',
+      '    this.skip();',
+      '  }',
+      '  expect(g()).toBe(2);',
+      '});',
+    ];
+    const ids = (from: string[], to: string[]) =>
+      change('a.test.js', from, to).map(([id]) => id);
+
+    it('accepts a skip inside a new test', () => {
+      expect(ids(OLD, [...OLD, ...NEW])).toEqual([]);
+    });
+
+    it('accepts a new test under a new skip decorator alias', () => {
+      const py = (...extra: string[]) => [
+        'import pytest',
+        ...extra,
+        'def test_a():',
+        '    assert f() == 1',
+      ];
+      const alias = 'needs_gc = pytest.mark.skipif(not CPYTHON, reason="gc")';
+      expect(
+        change(
+          'test_a.py',
+          py(),
+          py(
+            alias,
+            '',
+            '@needs_gc',
+            'def test_freed():',
+            '    assert g() is None',
+            '',
+          ),
+        ),
+      ).toEqual([]);
+      // The alias on an old test still counts.
+      expect(
+        change('test_a.py', py(), [
+          'import pytest',
+          alias,
+          '@needs_gc',
+          'def test_a():',
+          '    assert f() == 1',
+        ]).map(([id]) => id),
+      ).toContain('TG004');
+    });
+
+    it('still reports a skip added inside an old test', () => {
+      expect(
+        ids(OLD, [
+          "it('a', function () {",
+          '  this.skip();',
+          '  expect(f()).toBe(1);',
+          '});',
+          "it('dummy', () => {});",
+        ]),
+      ).toContain('TG004');
+    });
+
+    it('still reports an old test replaced by a skipped new one', () => {
+      expect(
+        ids(OLD, [
+          "it.skip('a again', () => {",
+          '  expect(f()).toBe(1);',
+          '});',
+        ]),
+      ).toContain('TG004');
+    });
+  });
+
   // gson 11daec5f: an identical assertion on the next line removed.
   it('accepts removing one of two identical neighbouring assertions', () => {
     const path = 'src/test/java/ATest.java';
