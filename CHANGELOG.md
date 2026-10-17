@@ -7,7 +7,8 @@
   `JEST_WORKER_ID`, `PYTEST_CURRENT_TEST`, `'pytest' in sys.modules`,
   `typeof vi !== 'undefined'`), looks for a test on its call stack or reads
   a test file; a module that exits with success while it loads, before what
-  it defines; a test, `conftest.py` or test helper that ends the run with
+  it defines; a test, `conftest.py`, test helper or setup file
+  (`setupTests.js`, `vitest.setup.ts`) that ends the run with
   success (`process.exit(0)`, `os._exit(0)`, `pytest.exit(…, returncode=0)`).
   `NODE_ENV === 'test'`, Vitest's in-source tests, a script's last-line
   exit, type declarations and runner configs are left alone. Blocked per
@@ -15,7 +16,8 @@
 - TG007: checks made true whatever the value are meaningless too:
   `assert x == 4 or True`, `expect(x === 4 || true).toBe(true)` (also
   `?? true`, `toEqual(true)`), `assertTrue(x || true)`, and an `assert`
-  inside `pytest.raises(Exception)` (also `as e`, `match=`).
+  inside `pytest.raises(Exception)` (also `as e`, `match=`, or added
+  under a block that was already there).
 - TG005: a `conftest.py` that swaps a module in `sys.modules` or overrides
   `TestCase.assert*`.
 - TG006: `git update-index --skip-worktree` / `--assume-unchanged`, which

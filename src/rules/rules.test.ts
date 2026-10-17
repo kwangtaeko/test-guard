@@ -299,6 +299,25 @@ describe('TG007', () => {
     ).toEqual([]);
   });
 
+  // Codex review: an old broad `raises` block with a new assert inside.
+  it('reports an assert added under an old pytest.raises(Exception)', () => {
+    const path = 'test_a.py';
+    const block = (body: string) =>
+      file(
+        path,
+        'def test_x():',
+        '    with pytest.raises(Exception):',
+        '        f(None)',
+        body,
+      );
+    expect(
+      check({
+        before: block('        g()'),
+        after: block('        assert f() == 5'),
+      }).map((f) => [f.ruleId, f.line]),
+    ).toEqual([['TG007', 4]]);
+  });
+
   it('reports a meaningless assertion under a new test once', () => {
     const path = 'test_a.py';
     expect(

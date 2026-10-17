@@ -194,6 +194,18 @@ describe('TG010', () => {
     expect(await findings()).toContain(`TG010 ${path}`);
   });
 
+  // Codex review: a runner setup file outside the test folders.
+  it('reports a setup file that ends the run with success', async () => {
+    setUp();
+    repo.write('src/setupTests.js', "import './polyfills.js';\n");
+    repo.commitAll();
+    repo.write(
+      'src/setupTests.js',
+      "import './polyfills.js';\nprocess.exit(0);\n",
+    );
+    expect(await findings()).toEqual(['TG010 src/setupTests.js']);
+  });
+
   it.each([
     '    if "pytest" in sys.argv[0]: return 4',
     "    if 'vi' in globalThis: return 4",

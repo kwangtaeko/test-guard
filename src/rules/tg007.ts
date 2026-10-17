@@ -263,6 +263,19 @@ const SPECS: Record<Language, Spec> = {
   },
 };
 
+// The line that opens the indented block holding line `at` (0-based), by
+// indentation, or -1.
+function enclosing(lines: string[], at: number): number {
+  const indent = (l: string) => l.length - l.trimStart().length;
+  const own = indent(lines[at] ?? '');
+  for (let i = at - 1; i >= 0; i--) {
+    const l = lines[i] ?? '';
+    if (l.trim() === '') continue;
+    if (indent(l) < own) return i;
+  }
+  return -1;
+}
+
 interface Hit {
   line: number;
   group: Matcher['group'];
@@ -421,11 +434,19 @@ export const tg007: Rule = ({
     }
     for (const line of hunk.added) {
       if (reported.has(line)) continue;
-      // A `with …:` is read with the line under it (`assert` inside it).
+      // A `with …:` is read with the line under it (`assert` inside it),
+      // and an `assert` added under an old `with …:` with that line.
       const own = after.lines[line - 1] ?? '';
+      const opener = /^\s*assert\b/.test(own)
+        ? enclosing(after.lines, line - 1)
+        : -1;
       const text = /^\s*with\b.*:\s*$/.test(own)
         ? `${own} ${(after.lines[line] ?? '').trim()}`
-        : own;
+        : opener !== -1 &&
+            !hunk.added.includes(opener + 1) &&
+            /^\s*with\b.*:\s*$/.test(after.lines[opener] ?? '')
+          ? `${after.lines[opener]} ${own.trim()}`
+          : own;
       const match = spec.trivial.map((re) => re.exec(text)).find(Boolean);
       if (!match) continue;
       findings.push({

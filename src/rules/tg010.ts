@@ -43,6 +43,10 @@ const EXIT_OK =
 // What a module defines after the line: an exit before it ends the import.
 const DEFINITION =
   /^(?:export\s|function\s|async\s+function\s|class\s|const\s|let\s|var\s|def\s|async\s+def\s|module\.exports|exports\.|public\s|@)/;
+// Setup files the runners load before the tests, by their usual names
+// (`setupTests.js`, `vitest.setup.ts`, `jest.setup.js`, `test-setup.ts`).
+const SETUP =
+  /(?:^|\/)(?:setup[-_.]?tests?|tests?[-_.]?setup|(?:jest|vitest|mocha)[-_.]setup|setup[-_.](?:jest|vitest|mocha)|global[-_.]?(?:setup|teardown))\.[cm]?[jt]sx?$/i;
 // Code that isn't runtime logic: type declarations, shell scripts, configs.
 const NOT_LOGIC = /\.d\.[cm]?ts$|\.(?:sh|ps1|bat|cmd)$/i;
 
@@ -55,12 +59,14 @@ export const tg010: Rule = ({
   support,
   runnerConfig,
   afterPath,
+  beforeLines,
   afterLines,
   hunks,
 }) => {
   if (!afterPath) return [];
-  // Tests and the files they load (`conftest.py`, `test/helpers.js`).
-  const testSide = after !== null || support !== null;
+  // Tests and the files they load (`conftest.py`, `test/helpers.js`,
+  // `src/setupTests.js`).
+  const testSide = after !== null || support !== null || SETUP.test(afterPath);
   const code =
     implementationFile && !runnerConfig && !NOT_LOGIC.test(afterPath);
   if (!testSide && !code) return [];
@@ -83,8 +89,8 @@ export const tg010: Rule = ({
     if (testSide) {
       // Ending the process with success: the runner may count it passed.
       // Judged on code, not on test data in strings.
-      const stripped = after?.lines ?? support?.after ?? [];
-      const was = before?.lines ?? support?.before ?? [];
+      const stripped = after?.lines ?? support?.after ?? afterLines;
+      const was = before?.lines ?? support?.before ?? beforeLines;
       if (
         EXIT_OK.test(stripped[n - 1] ?? '') &&
         !was.some((l) => EXIT_OK.test(l))
