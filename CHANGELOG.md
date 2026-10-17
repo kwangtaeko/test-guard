@@ -18,6 +18,18 @@
   `?? true`, `toEqual(true)`), `assertTrue(x || true)`, and an `assert`
   inside `pytest.raises(Exception)` (also `as e`, `match=`, or added
   under a block that was already there).
+- Fewer false positives on real history (1,200 commits of express, flask,
+  gson and zod: 6 stopped that weakened nothing, down from 17): a test
+  script that only changes its launcher (`pnpm` → `nub exec --node`) or
+  drops `--bail`; an include list (`projects`) that only grows; one of two
+  identical neighbouring assertions removed; a file named like a test with
+  nothing of a test in it; a skip on a test added in the same change, or
+  rewritten with the same condition (`assumeTrue(c)` →
+  `assumeTrue("why", c)`); Java `throw new AssertionError(…)` counted like
+  `fail()`; several `contains` checks merged into one exact comparison; a
+  deleted `assert…` helper; Truth `substring(0, p.length())).isEqualTo(p)` →
+  `startsWith(p)`; and a test file renamed with most lines edited, now
+  compared as a rename.
 - TG005: a `conftest.py` that swaps a module in `sys.modules` or overrides
   `TestCase.assert*`.
 - TG006: `git update-index --skip-worktree` / `--assume-unchanged`, which

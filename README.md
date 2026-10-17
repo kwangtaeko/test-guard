@@ -321,25 +321,27 @@ from fixing it. Small samples; details and caveats in
 
 `scripts/fp-history.mjs` runs `test-guard check` on each commit of a
 repository against its parent. On the last 300 commits of four projects
-(cloned 2026-10-06, measured 2026-10-13):
+(cloned 2026-10-06, measured 2026-10-17):
 
 | Repository | Stack | Commits stopped | Didn't weaken anything |
 |---|---|---|---|
-| expressjs/express | JS, Mocha | 26 (8.7%) | 4 |
-| pallets/flask | Python, pytest | 3 (1.0%) | 0 |
-| google/gson | Java, JUnit | 13 (4.3%) | 5 |
-| colinhacks/zod | TS, Vitest | 11 (3.7%) | 2 |
-| **Total** | | **53 / 1,200 (4.4%)** | **11 (0.9%)** |
+| expressjs/express | JS, Mocha | 24 (8.0%) | 2 |
+| pallets/flask | Python, pytest | 2 (0.7%) | 0 |
+| google/gson | Java, JUnit | 9 (3.0%) | 2 |
+| colinhacks/zod | TS, Vitest | 7 (2.3%) | 2 |
+| **Total** | | **42 / 1,200 (3.5%)** | **6 (0.5%)** |
 
-42 of the 53 really removed, skipped or weakened tests (a feature dropped
-with its tests, as Express 5 removed old signatures, a test marked `@Ignore`,
-`skipif` or `describe.skip`, `assertThrows(Specific.class)` loosened on
-purpose); people make these changes too, and they pass with one approval.
-The other 11 didn't weaken anything: assertions merged into one, `try/fail`
-moved to `assertThrows`, a test replaced by a new file, duplicate tests
-removed, new tests added already skipped, a wrapper added to the `test`
-script. None was a wrong reading of the code. Express's tests (`test/*.js`)
-have no `.test.` in their names; they are found from its Mocha settings. To
+36 of the 42 really removed, skipped or weakened tests (a feature dropped
+with its tests, as Express 5 removed old signatures, a test marked `@Ignore`
+or `describe.skip`, a check loosened on purpose); people make these changes
+too, and they pass with one approval. Each of the 42 was classified from
+its diff. The
+other 6 didn't weaken anything: duplicate tests removed, new tests wrapped
+in a conditional skip alias, a test rewritten and moved to another file, a
+test moved to an integration-test file another plugin runs, a CI workflow
+deleted while the same test step runs elsewhere, and assertions rewritten
+for a spec change. Express's tests (`test/*.js`) have no `.test.` in their
+names; they are found from its Mocha settings. To
 reproduce:
 
 ```bash
