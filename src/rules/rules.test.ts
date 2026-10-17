@@ -72,6 +72,24 @@ describe('TG001', () => {
       }),
     ).toEqual([]);
   });
+
+  // FP history (zod ce1e11b7): a script that only borrowed a test's name.
+  it('accepts deleting a file named like a test with nothing of one', () => {
+    const script = file('meta.test.mjs', 'const a = load(x);', 'run(a);');
+    expect(check({ before: script, after: null })).toEqual([]);
+    expect(
+      check({ before: script, after: file('meta.mjs', 'run(1);') }),
+    ).toEqual([]);
+  });
+
+  it('still reports a test file whose tests it cannot count', () => {
+    expect(
+      check({
+        before: file('a.test.js', "tape('adds', (t) => { t.end(); });"),
+        after: null,
+      }).map((f) => f.ruleId),
+    ).toEqual(['TG001']);
+  });
 });
 
 describe('TG002 / TG003', () => {
@@ -1134,6 +1152,88 @@ describe('M8: false positives found in real history', () => {
     check({ before: file(path, ...from), after: file(path, ...to) }).map(
       (f) => [f.ruleId, f.message],
     );
+
+  // express 6340d150, zod e4d67f3e / fa77a4d7: the same or more tests run.
+  it.each([
+    [
+      'mocha --reporter spec --bail --check-leaks test/',
+      'mocha --reporter spec --check-leaks test/',
+    ],
+    ['pnpm vitest run', 'nub exec --node vitest run'],
+    ['vitest run', 'npx vitest run'],
+    ['pnpm a && pnpm b', 'nub run a && nub run b'],
+  ])('accepts the test script %j → %j', (from, to) => {
+    const pkg = (s: string) => [
+      '{',
+      '  "scripts": {',
+      `    "test": "${s}"`,
+      '  }',
+      '}',
+    ];
+    expect(change('package.json', pkg(from), pkg(to))).toEqual([]);
+  });
+
+  it.each([
+    ['vitest run', 'nub exec --node vitest run -t parse'],
+    ['mocha test/ test/acceptance/', 'mocha test/'],
+    ['vitest run', 'vitest run --bail'],
+  ])('reports the test script %j → %j', (from, to) => {
+    const pkg = (s: string) => [
+      '{',
+      '  "scripts": {',
+      `    "test": "${s}"`,
+      '  }',
+      '}',
+    ];
+    expect(change('package.json', pkg(from), pkg(to)).length).toBeGreaterThan(
+      0,
+    );
+  });
+
+  it('accepts a projects list that only grows', () => {
+    const config = (list: string) => [
+      'export default {',
+      '  test: {',
+      `    projects: [${list}],`,
+      '  },',
+      '};',
+    ];
+    expect(
+      change(
+        'vitest.config.ts',
+        config('"packages/*"'),
+        config('"packages/*", "./vitest.compile.config.ts"'),
+      ),
+    ).toEqual([]);
+    expect(
+      change(
+        'vitest.config.ts',
+        config('"packages/*", "./e2e"'),
+        config('"packages/*", "./other"'),
+      ).map(([id]) => id),
+    ).toEqual(['TG005']);
+  });
+
+  // gson 11daec5f: an identical assertion on the next line removed.
+  it('accepts removing one of two identical neighbouring assertions', () => {
+    const path = 'src/test/java/ATest.java';
+    const body = (...asserts: string[]) => [
+      'class ATest {',
+      '  @Test public void a() {',
+      ...asserts,
+      '  }',
+      '}',
+    ];
+    const one = '    assertThat(list).containsExactly(1);';
+    expect(change(path, body(one, one), body(one))).toEqual([]);
+    // Different neighbours, or both copies gone, still count.
+    expect(
+      change(path, body(one, '    assertThat(x).isTrue();'), body(one)),
+    ).toEqual([['TG003', 'assertions 2 → 1']]);
+    expect(change(path, body(one, one), body())).toEqual([
+      ['TG003', 'assertions 2 → 0'],
+    ]);
+  });
   const STEPS = [
     'jobs:',
     '  test:',

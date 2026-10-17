@@ -428,12 +428,15 @@ export const tg005: Rule = ({
     // A comma added after a sibling is no change either.
     const key = TEST_SCRIPT.exec(text)?.[0].replace(/\s*:$/, '');
     const bare = (l: string) => l.trim().replace(/,$/, '');
+    const old = key && beforeLines.find((l) => l.includes(key));
     const testScript =
       beforePath !== null &&
       runnerConfig === 'package.json' &&
       key !== undefined &&
-      beforeLines.some((l) => l.includes(key)) &&
-      !beforeLines.some((l) => bare(l) === bare(text));
+      old !== undefined &&
+      !beforeLines.some((l) => bare(l) === bare(text)) &&
+      !sameRun(scriptOf(old), scriptOf(text));
+    if (token && widens(token, text, before.deleted)) continue;
     if (!token && !testScript) continue;
     findings.push({
       ruleId: 'TG005',
@@ -446,6 +449,55 @@ export const tg005: Rule = ({
   }
   return findings;
 };
+
+// A script's command: `"test": "vitest run",` → `vitest run`.
+const scriptOf = (line: string | false) =>
+  (line && /:\s*"((?:[^"\\]|\\.)*)"/.exec(line)?.[1]) || '';
+// Programs that only start another one (`pnpm vitest` is `vitest`).
+const LAUNCHER =
+  /(?:^|(?<=[\s;&|(]))(?:nub\s+exec\s+--node|nub\s+run|pnpm\s+(?:exec|run)|npm\s+(?:exec|run)|yarn\s+run|bun\s+run|npx|pnpx|bunx|nub|pnpm|yarn|tsx|ts-node)\s+/g;
+// Options whose removal runs more tests: stopping at the first failure.
+const STOPS_EARLY = new Set([
+  '--bail',
+  '-b',
+  '--exitfirst',
+  '-x',
+  '--fail-fast',
+]);
+
+// The same tests run: the command after another launcher, or with only an
+// option that stops at the first failure taken out.
+function sameRun(before: string, after: string): boolean {
+  const words = (s: string) =>
+    s.replace(LAUNCHER, '').trim().split(/\s+/).filter(Boolean);
+  const a = words(before);
+  const b = words(after);
+  if (a.length === 0) return false;
+  let i = 0;
+  for (const word of a) {
+    if (word === b[i]) i++;
+    else if (!STOPS_EARLY.has(word)) return false;
+  }
+  return i === b.length;
+}
+
+// Settings that list what runs; growing one runs more.
+const INCLUDES = new Set(['projects', 'include', 'testMatch', 'roots', 'spec']);
+const quoted = (line: string) =>
+  [...line.matchAll(/(['"`])((?:(?!\1)[^\\]|\\.)*)\1/g)].map((m) => m[2]);
+
+// An include list that kept every entry and gained some.
+function widens(token: Token, line: string, deleted: string[]): boolean {
+  if (!INCLUDES.has(token.label)) return false;
+  const now = new Set(quoted(line));
+  return deleted.some((old) => {
+    if (!token.re.test(old)) return false;
+    const was = quoted(old);
+    return (
+      was.length > 0 && was.every((v) => now.has(v)) && now.size > was.length
+    );
+  });
+}
 
 // The file's name (`packages/a/package.json` → `package.json`): a
 // sub-package's runner settings are read like the root's.
