@@ -1081,3 +1081,52 @@ describe('Mocha and node --test in sub-packages', () => {
     expect(await found()).toContain(`TG005 packages/b/${name}`);
   });
 });
+
+// FP history (zod 9782f87c): a rename git didn't see, most lines edited.
+describe('test files renamed with most lines edited', () => {
+  const OLD = [
+    "import { isValid } from '../src/check.js';",
+    "test('accepts a valid schema', () => { expect(isValid(schemaA)).toBe(true); });",
+    "test('rejects a broken schema', () => { expect(isValid(schemaB)).toBe(false); });",
+    "test('rejects nothing at all', () => { expect(isValid(undefined)).toBe(false); });",
+    '',
+  ].join('\n');
+  const renamed = (body: string) => body.replaceAll('isValid', 'validate');
+  const found = async () =>
+    brief((await repo.check('--json')).stdout).map(
+      ({ ruleId, path }) => `${ruleId} ${path}`,
+    );
+  const setUp = () => {
+    repo = new Repo();
+    repo.write('test/is-valid.test.js', OLD);
+    repo.commitAll();
+    repo.git('rm', '-q', 'test/is-valid.test.js');
+  };
+
+  it('judges it as a rename', async () => {
+    setUp();
+    repo.write('test/validate.test.js', renamed(OLD));
+    expect(await found()).toEqual([]);
+  });
+
+  it('still reports what the new file weakened', async () => {
+    setUp();
+    repo.write(
+      'test/validate.test.js',
+      renamed(OLD).replace(
+        "test('rejects nothing",
+        "test.skip('rejects nothing",
+      ),
+    );
+    expect(await found()).toEqual(['TG004 test/validate.test.js']);
+  });
+
+  it('still reports a deletion next to an unrelated or smaller file', async () => {
+    setUp();
+    repo.write(
+      'test/validate.test.js',
+      "test('other', () => { expect(other()).toBe(1); });\n",
+    );
+    expect(await found()).toEqual(['TG001 test/is-valid.test.js']);
+  });
+});
