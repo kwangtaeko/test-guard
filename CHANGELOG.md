@@ -15,6 +15,14 @@
   in `package.json` no longer hides Mocha's or Node's settings, and a quoted
   path with spaces (`"checks/failing test.js"`) is read whole for both.
   Running `node --test --test-update-snapshots` is blocked like `jest -u`.
+- Monorepos: each sub-package's `package.json` and `.mocharc.*` are read
+  too, with patterns relative to that package (`packages/a` running
+  `node --test` makes `packages/a/test/**` tests), and TG005 reports a
+  sub-package script that narrows them. A package that runs Mocha without
+  its own `.mocharc.*` uses the nearest parent's, as Mocha does; those
+  under `fixtures`, `vendor`, `testdata` or `node_modules` are left out.
+  These files are read in two git calls, whatever the attributes or
+  `git grep`/colour settings, instead of one call each.
 - Mocha projects: test files without `.test.` in their names are found from
   Mocha's own settings: the directories and globs the `package.json` scripts
   give `mocha`, `spec` in `.mocharc.*` or `package.json` `"mocha"`, or

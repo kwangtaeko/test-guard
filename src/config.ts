@@ -93,10 +93,9 @@ export function createContext(
   const excluded = (path: string) => isExcluded(normalizePath(path));
   // Not dotfiles (`test/.eslintrc.js`) or dependencies, which the runners
   // don't run either.
-  const byRunner =
-    runner.length > 0 && config.languages.includes('js')
-      ? picomatch(runner, { ignore: '**/node_modules/**' })
-      : () => false;
+  const byRunner = config.languages.includes('js')
+    ? runnerMatcher(runner)
+    : () => false;
   const runnerOnly = (path: string) => {
     const normalized = normalizePath(path);
     return match(normalized) === null && byRunner(normalized);
@@ -108,6 +107,32 @@ export function createContext(
     },
     excluded,
     runnerOnly,
+  };
+}
+
+// Patterns grouped by the directory they start in (`packages/a/test`), so
+// a path is tried only against those of its own directories: a monorepo
+// can give thousands.
+function runnerMatcher(patterns: string[]): (path: string) => boolean {
+  const groups = new Map<string, string[]>();
+  for (const pattern of patterns) {
+    const base = picomatch.scan(pattern).base.replace(/\\(.)/g, '$1');
+    const group = groups.get(base);
+    if (group) group.push(pattern);
+    else groups.set(base, [pattern]);
+  }
+  const matchers = new Map(
+    [...groups].map(([base, group]) => [
+      base,
+      picomatch(group, { ignore: '**/node_modules/**' }),
+    ]),
+  );
+  return (path) => {
+    const parts = path.split('/');
+    for (let i = 0; i <= parts.length; i++) {
+      if (matchers.get(parts.slice(0, i).join('/'))?.(path)) return true;
+    }
+    return false;
   };
 }
 

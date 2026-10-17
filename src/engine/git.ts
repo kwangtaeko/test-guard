@@ -284,6 +284,48 @@ export function grepTree(
     });
 }
 
+// The files in `rev` that `wanted` picks, read in two git calls (the
+// tree, then every file through `cat-file --batch`): no attributes, colour
+// or pathspec settings change what comes back.
+export function readTreeTexts(
+  root: string,
+  rev: string,
+  wanted: (path: string) => boolean,
+): Map<string, string> {
+  const texts = new Map<string, string>();
+  let paths: string[];
+  try {
+    paths = listTreeFiles(root, rev).filter(
+      (path) => wanted(path) && !path.includes('\n'),
+    );
+  } catch {
+    return texts; // no such revision
+  }
+  if (paths.length === 0) return texts;
+  const out: Buffer = execFileSync('git', ['cat-file', '--batch'], {
+    cwd: root,
+    input: paths.map((path) => `${rev}:${path}\n`).join(''),
+    maxBuffer: 1024 * 1024 * 1024,
+    stdio: ['pipe', 'pipe', 'pipe'],
+  });
+  // Each object is `<oid> <type> <size>\n<content>\n`; one that isn't
+  // there (a submodule) is `<name> missing\n`.
+  let at = 0;
+  for (const path of paths) {
+    const end = out.indexOf(10, at);
+    if (end === -1) break;
+    const header = out.toString('utf8', at, end).split(' ');
+    at = end + 1;
+    if (header.length !== 3) continue;
+    const size = Number(header[2]);
+    if (header[1] === 'blob') {
+      texts.set(path, out.toString('utf8', at, at + size));
+    }
+    at += size + 1;
+  }
+  return texts;
+}
+
 // Files committed in `rev`.
 export function listTreeFiles(root: string, rev: string): string[] {
   return git(root, ['ls-tree', '-r', '-z', '--name-only', rev])

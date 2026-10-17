@@ -25,6 +25,7 @@ import { diffLines } from '../engine/diff.js';
 import {
   listWorktreeFiles,
   readBlobIfExists,
+  readTreeTexts,
   resolveCommit,
 } from '../engine/git.js';
 import { literalFinder } from '../engine/literals.js';
@@ -37,11 +38,10 @@ import {
   type StopInput,
 } from '../hook-io/common.js';
 import { toLf } from '../languages/index.js';
-import { mochaTestPatterns } from '../mocha.js';
-import { nodeTestPatterns } from '../node-test.js';
 import { normalizePath } from '../paths.js';
 import type { RuleId } from '../rules/index.js';
 import { hooksTurnedOff } from '../rules/tg006.js';
+import { isRunnerFile, runnerTestPatterns } from '../runner-tests.js';
 import type { PatchedFile } from './apply-patch.js';
 import { recordSessionStart, sessionStart } from './session.js';
 import {
@@ -489,14 +489,13 @@ function loadContext(root: string): { config: Config; ctx: CompareContext } {
   let loaded = contexts.get(root);
   if (!loaded) {
     const config = parseConfig(readBlobIfExists(root, `HEAD:${CONFIG_FILE}`));
-    const committed = (path: string) => readBlobIfExists(root, `HEAD:${path}`);
     loaded = {
       config,
       ctx: {
-        ...createContext(config, [
-          ...mochaTestPatterns(committed),
-          ...nodeTestPatterns(committed),
-        ]),
+        ...createContext(
+          config,
+          runnerTestPatterns(readTreeTexts(root, 'HEAD', isRunnerFile)),
+        ),
         // Before the tool runs, the disk is the "before" side.
         dirExisted: (dir) => {
           const path = join(root, dir);

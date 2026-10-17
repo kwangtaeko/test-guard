@@ -994,3 +994,75 @@ describe('node --test files outside the default patterns', () => {
     expect(await found()).toEqual([]);
   });
 });
+
+describe('Mocha and node --test in sub-packages', () => {
+  const APP =
+    "const { test } = require('node:test');\ntest('a', () => {});\ntest('b', () => {});\n";
+  const SKIPPED = APP.replace("test('b'", "test.skip('b'");
+  const found = async () =>
+    brief((await repo.check('--json')).stdout).map(
+      ({ ruleId, path }) => `${ruleId} ${path}`,
+    );
+  const pkg = (scripts: Record<string, string>) =>
+    JSON.stringify({ scripts }, null, 2);
+
+  it("reads each package's scripts, relative to it", async () => {
+    repo = new Repo();
+    repo.write('package.json', pkg({ test: 'npm test --workspaces' }));
+    repo.write('packages/a/package.json', pkg({ test: 'node --test' }));
+    repo.write('packages/b/package.json', pkg({ test: 'mocha checks' }));
+    repo.write('packages/a/test/app.js', APP);
+    repo.write('packages/b/checks/app.js', APP);
+    repo.write('packages/c/test/app.js', APP);
+    repo.commitAll();
+    repo.write('packages/a/test/app.js', SKIPPED);
+    repo.write('packages/b/checks/app.js', SKIPPED);
+    repo.write('packages/c/test/app.js', SKIPPED);
+    expect(await found()).toEqual([
+      'TG004 packages/a/test/app.js',
+      'TG004 packages/b/checks/app.js',
+    ]);
+  });
+
+  it('reports a sub-package script that narrows them', async () => {
+    repo = new Repo();
+    repo.write(
+      'packages/a/package.json',
+      pkg({ test: 'npm run unit', unit: 'node --test' }),
+    );
+    repo.write('packages/a/test/app.js', APP);
+    repo.commitAll();
+    repo.write(
+      'packages/a/package.json',
+      pkg({ test: 'npm run unit', unit: 'node --test test/unit/' }),
+    );
+    expect(await found()).toEqual(['TG005 packages/a/package.json']);
+  });
+
+  // Red-team re-check: settings that changed what `git grep` returned.
+  it.each([
+    [
+      'an uncommitted .gitattributes',
+      () => repo.write('.gitattributes', 'package.json -diff\n'),
+    ],
+    ['grep.column', () => repo.git('config', 'grep.column', 'true')],
+    ['color.ui always', () => repo.git('config', 'color.ui', 'always')],
+  ])('still reads them with %s', async (_, change) => {
+    repo = new Repo();
+    repo.write('packages/a/package.json', pkg({ test: 'node --test' }));
+    repo.write('packages/a/test/app.js', APP);
+    repo.commitAll();
+    change();
+    repo.write('packages/a/test/app.js', SKIPPED);
+    expect(await found()).toContain('TG004 packages/a/test/app.js');
+  });
+
+  it('counts an empty .mocharc as a Mocha project', async () => {
+    repo = new Repo();
+    repo.write('.mocharc.yml', '');
+    repo.write('test/app.js', APP);
+    repo.commitAll();
+    repo.write('test/app.js', SKIPPED);
+    expect(await found()).toEqual(['TG004 test/app.js']);
+  });
+});

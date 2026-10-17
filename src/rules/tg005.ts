@@ -437,19 +437,23 @@ export const tg005: Rule = ({
   return findings;
 };
 
-// A pattern the root `package.json` gave `node --test` before the change
-// whose files the patterns after it don't all reach: a sample path for
-// each of its brace choices (`test/**/*.{js,mjs}` → `test/a.js`,
-// `test/a.mjs`, …) is tried.
+// The file's name (`packages/a/package.json` → `package.json`): a
+// sub-package's runner settings are read like the root's.
+const nameOf = (path: string | null) => path?.split('/').pop() ?? null;
+
+// A pattern a `package.json` gave `node --test` before the change whose
+// files the patterns after it don't all reach: a sample path for each of
+// its brace choices (`test/**/*.{js,mjs}` → `test/a.js`, `test/a.mjs`, …)
+// is tried.
 function nodeNarrowed(
   beforePath: string | null,
   afterPath: string | null,
   beforeLines: string[],
   afterLines: string[],
 ): string | undefined {
-  if (beforePath !== 'package.json') return undefined;
+  if (nameOf(beforePath) !== 'package.json') return undefined;
   const patterns = (path: string | null, lines: string[]) =>
-    nodeTestPatterns((p) => (p === path ? lines.join('\n') : null));
+    nodeTestPatterns((p) => (p === nameOf(path) ? lines.join('\n') : null));
   const now = patterns(afterPath, afterLines);
   const reached = now.length > 0 ? picomatch(now) : () => false;
   return patterns(beforePath, beforeLines).find(
@@ -471,20 +475,20 @@ function samples(pattern: string): string[] {
   return ['a', 'z'].map((x) => path.replace(/[*?]/g, x));
 }
 
-// A Mocha test file pattern the root `package.json` or `.mocharc.*` gave
-// before the change and not after.
+// A Mocha test file pattern a `package.json` or `.mocharc.*` gave before
+// the change and not after.
 function mochaNarrowed(
   beforePath: string | null,
   afterPath: string | null,
   beforeLines: string[],
   afterLines: string[],
 ): string | undefined {
-  const name = beforePath ?? '';
+  const name = nameOf(beforePath) ?? '';
   if (name !== 'package.json' && !/^\.mocharc(?:\.\w+)?$/.test(name)) {
     return undefined;
   }
   const patterns = (path: string | null, lines: string[]) =>
-    mochaTestPatterns((p) => (p === path ? lines.join('\n') : null));
+    mochaTestPatterns((p) => (p === nameOf(path) ? lines.join('\n') : null));
   const now = new Set(patterns(afterPath, afterLines));
   return patterns(beforePath, beforeLines).find((p) => !now.has(p));
 }

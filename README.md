@@ -139,7 +139,7 @@ unittest) and Java (JUnit 4/5).
 
 | Language | Test files (default) |
 |---|---|
-| JS/TS | `*.test.*`, `*.spec.*`, `__tests__/**` (JS/TS extensions); in a Mocha project also its specs (`package.json` test script, `.mocharc.*`, or Mocha's default `test/*.{js,cjs,mjs}`); with `node --test` in a `package.json` script, the patterns it gives or Node's defaults (`test/**`, `*-test.*`, `test-*.*`, …) |
+| JS/TS | `*.test.*`, `*.spec.*`, `__tests__/**` (JS/TS extensions); in a Mocha project also its specs (`package.json` test script, `.mocharc.*`, or Mocha's default `test/*.{js,cjs,mjs}`); with `node --test` in a `package.json` script, the patterns it gives or Node's defaults (`test/**`, `*-test.*`, `test-*.*`, …); a sub-package's settings apply under its directory |
 | Python | `test_*.py`, `*_test.py` |
 | Java | `src/test/**/*Test.java`, `*Tests.java`, `*IT.java` |
 

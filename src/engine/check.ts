@@ -4,9 +4,8 @@ import {
   createContext,
   parseConfig,
 } from '../config.js';
-import { mochaTestPatterns } from '../mocha.js';
-import { nodeTestPatterns } from '../node-test.js';
 import { RULE_IDS, type RuleId } from '../rules/index.js';
+import { isRunnerFile, runnerTestPatterns } from '../runner-tests.js';
 import type { Finding } from '../types.js';
 import {
   type CompareContext,
@@ -28,6 +27,7 @@ import {
   listTreeFiles,
   readBlob,
   readBlobIfExists,
+  readTreeTexts,
   resolveBase,
 } from './git.js';
 import { literalFinder } from './literals.js';
@@ -54,14 +54,12 @@ export function runCheck(options: CheckOptions): CheckResult {
   const config = parseConfig(
     base ? readBlobIfExists(root, `${base}:${CONFIG_FILE}`) : null,
   );
-  const committed = (path: string) =>
-    base ? readBlobIfExists(root, `${base}:${path}`) : null;
   let baseDirs: Set<string> | undefined;
   const ctx: CompareContext = {
-    ...createContext(config, [
-      ...mochaTestPatterns(committed),
-      ...nodeTestPatterns(committed),
-    ]),
+    ...createContext(
+      config,
+      base ? runnerTestPatterns(readTreeTexts(root, base, isRunnerFile)) : [],
+    ),
     // Only asked when a runner config is added, so the git call is rare.
     dirExisted: (dir) => {
       if (!base) return false;
