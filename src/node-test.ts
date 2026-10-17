@@ -1,4 +1,11 @@
-import { pathsIn, RUNNER, record, unquote } from './mocha.js';
+import {
+  pathsIn,
+  quotedPath,
+  RUNNER,
+  record,
+  unquote,
+  words,
+} from './mocha.js';
 
 // The test files `node --test` runs, which need no `.test.` in their names
 // (`test/a.js`, `a-test.js`, `test-a.mjs`): the patterns a `package.json`
@@ -42,25 +49,29 @@ export function nodeTestPatterns(
       script.replace(/\\\r?\n/g, ' ').split(/&&|\|\||;|\|(?![^()\s]*\))/),
     );
   for (const command of commands) {
-    const words = command.trim().split(/\s+/);
-    const at = words.findIndex((w) => NODE.test(unquote(w)));
-    if (at === -1 || (at > 0 && !RUNNER.test(words[0] ?? ''))) continue;
+    const all = words(command);
+    const at = all.findIndex((w) => NODE.test(unquote(w)));
+    if (at === -1 || (at > 0 && !RUNNER.test(all[0] ?? ''))) continue;
     // `--test` among Node's own options, before a script to run.
     let test = false;
     const given: string[] = [];
-    for (let i = at + 1; i < words.length; i++) {
-      const word = unquote(words[i] ?? '');
+    for (let i = at + 1; i < all.length; i++) {
+      const word = unquote(all[i] ?? '');
       const [option = '', value] = word.split(/=(.*)/);
       if (option === '--test') test = true;
       else if (VALUED.test(option)) {
         if (value === undefined) i++;
       } else if (!word.startsWith('-') && word !== '') {
         if (!test) break;
-        given.push(word);
+        given.push(all[i] ?? '');
       }
     }
     if (!test) continue;
-    const paths = given.flatMap((word) => {
+    const paths = given.flatMap((raw) => {
+      // A quoted path as written, spaces included.
+      const quoted = quotedPath(raw);
+      if (quoted !== null) return quoted === '' ? [] : [quoted];
+      const word = unquote(raw);
       const path = word
         .replace(/\\/g, '/')
         .replace(/^(?:\.\/)+/, '')

@@ -162,7 +162,7 @@ const TEST_STEP: Token[] = [
     label: 'test filter',
   },
   {
-    re: /(?:^|\s)(?:-u|--updateSnapshot|--update-snapshots?|--snapshot-update)(?=[\s=]|$)/,
+    re: /(?:^|\s)(?:-u|--updateSnapshot|--update-snapshots?|--test-update-snapshots|--snapshot-update)(?=[\s=]|$)/,
     label: '-u',
   },
   {

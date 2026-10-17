@@ -86,6 +86,9 @@ describe('mochaTestPatterns, red-team re-check', () => {
     ['mocha --delay tests/unit', ['tests/unit/*.{js,cjs,mjs}']],
     ['mocha --extension .ts tests/unit', ['tests/unit/*.{js,cjs,mjs,ts}']],
     ['mocha .\\tests\\unit', ['tests/unit/*.{js,cjs,mjs}']],
+    // Codex review: quoted paths with spaces.
+    ['mocha "checks/failing test.js"', ['checks/failing test.js']],
+    ["mocha --spec 'my tests'", ['my tests/*.{js,cjs,mjs}']],
   ])('reads %s', (test, expected) => {
     expect(script(test)).toEqual(expected);
   });

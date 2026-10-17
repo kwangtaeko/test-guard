@@ -446,7 +446,7 @@ function walk(command: string, cwd: string, depth = 0): Segment[] {
 
 // A test run that rewrites snapshots to match the current output (TG008):
 // `jest -u`, `vitest --update`, `npm test -- -u`, Playwright
-// `--update-snapshots`.
+// `--update-snapshots`, `node --test --test-update-snapshots`.
 export function updatesSnapshots(command: string, cwd: string): boolean {
   return walk(command, cwd).some(({ tokens }) => {
     if (verbOf(tokens) === 'echo') return false;
@@ -457,13 +457,15 @@ export function updatesSnapshots(command: string, cwd: string): boolean {
         ),
       ) ||
       (/^(?:npm|pnpm|yarn|bun)$/i.test(verbOf(tokens)) &&
-        tokens.some((t) => /^(?:t|test(?::.*)?)$/.test(t)));
+        tokens.some((t) => /^(?:t|test(?::.*)?)$/.test(t))) ||
+      (tokens.some((t) => /(?:^|[\\/])(?:node|tsx)(?:\.exe)?$/i.test(t)) &&
+        tokens.includes('--test'));
     // Jest also takes `--u`; pytest plugins have their own flags.
     return (
       runner &&
       tokens.some(
         (t) =>
-          /^(?:--?u|--update|--updateSnapshot|--update-snapshots?|--snapshot[.-]update|--force-regen|--inline-snapshot=(?:fix|create|update)\S*)(?:=.*)?$/.test(
+          /^(?:--?u|--update|--updateSnapshot|--update-snapshots?|--test-update-snapshots|--snapshot[.-]update|--force-regen|--inline-snapshot=(?:fix|create|update)\S*)(?:=.*)?$/.test(
             t,
           ) && !/=(?:false|0)$/.test(t),
       )

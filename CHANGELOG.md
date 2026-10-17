@@ -12,7 +12,9 @@
   `--test-name-pattern`, `--test-skip-pattern`, `--test-only` or
   `--test-shard` added to any script. Extglobs (`*.?(c|m)js`) are read as
   patterns, and one from the shell (`$GLOB`) as any file. A byte order mark
-  in `package.json` no longer hides Mocha's or Node's settings.
+  in `package.json` no longer hides Mocha's or Node's settings, and a quoted
+  path with spaces (`"checks/failing test.js"`) is read whole for both.
+  Running `node --test --test-update-snapshots` is blocked like `jest -u`.
 - Mocha projects: test files without `.test.` in their names are found from
   Mocha's own settings: the directories and globs the `package.json` scripts
   give `mocha`, `spec` in `.mocharc.*` or `package.json` `"mocha"`, or

@@ -995,6 +995,7 @@ describe('M7 workflow checks, red-team re-check', () => {
     ],
     [['        shell: bash {0}', '        run: npm test'], 'shell: {0}'],
     [['        run: npm test -- -u'], '-u'],
+    [['        run: node --test --test-update-snapshots'], '-u'],
     [['        run: npx jest --testPathPattern unit'], 'test filter'],
     [['        run: go test -run TestAdd ./...'], 'test filter'],
     [

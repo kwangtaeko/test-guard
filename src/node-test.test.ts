@@ -64,4 +64,11 @@ describe('nodeTestPatterns', () => {
       ),
     ).toEqual([`t/**/*.${EXT}`]);
   });
+
+  // Codex review: a quoted path with spaces fell back to the defaults.
+  it('keeps quoted paths with spaces whole', () => {
+    expect(
+      patterns({ test: `node --test "checks/failing test.js" 'my tests/'` }),
+    ).toEqual(['checks/failing test.js', `my tests/**/*.${EXT}`]);
+  });
 });

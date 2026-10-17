@@ -331,6 +331,10 @@ describe('updatesSnapshots, red-team re-check', () => {
     'pytest --snapshot-update',
     'pytest --inline-snapshot=fix',
     'pytest --force-regen',
+    // Codex review: Node's own snapshot update.
+    'node --test --test-update-snapshots',
+    'npx tsx --test --test-update-snapshots test/',
+    'npm test -- --test-update-snapshots',
   ])('%s', (command) => {
     expect(updatesSnapshots(command, cwd)).toBe(true);
   });
@@ -339,6 +343,7 @@ describe('updatesSnapshots, red-team re-check', () => {
     'echo npx jest -u',
     'npx vitest run --update=false',
     'mocha -u bdd',
+    'node server.js -u',
   ])('leaves %s alone', (command) => {
     expect(updatesSnapshots(command, cwd)).toBe(false);
   });
