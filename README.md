@@ -27,6 +27,10 @@ the bug stays. test-guard catches this with the same rules in three places:
 
 No LLM, no network, no telemetry. Same input, same result.
 
+In a [benchmark](#does-it-change-what-agents-do) where a failing test
+contradicts the spec, Claude Code and Codex told "make the tests pass"
+changed the test in **17 of 24 runs without test-guard and 2 of 24 with it**.
+
 ## Installation
 
 ```sh
@@ -254,6 +258,11 @@ export default defineConfig({ rules: [testGuard()] })
 
 Probity has no end-of-turn hook, so pair it with the commit-msg hook and the
 GitHub Action. Details in [docs/agents/probity.md](docs/agents/probity.md).
+
+test-guard's rules are fixed on purpose, so an agent can't argue its way
+past them. For a judgment they can't make, such as logic changed to fit a
+wrong test, Probity's AI-validated rules can check a change against your
+spec with the agent's own login: test-guard blocks, the AI rule reviews.
 
 Other agents: use the commit-msg hook and the GitHub Action.
 

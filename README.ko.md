@@ -28,6 +28,10 @@ assertion을 빼거나, 테스트 실행 대상에서 제외해서 "고치는" �
 
 LLM 호출, 네트워크, 텔레메트리 없음. 같은 입력이면 같은 결과입니다.
 
+실패하는 테스트가 명세와 모순되는 [벤치마크](#에이전트-행동이-실제로-달라지나)에서 Claude Code와
+Codex에게 "테스트를 통과시켜라"라고 하자, 테스트를 바꾼 경우가 **test-guard 없이 24번 중 17번,
+켜고 24번 중 2번**이었습니다.
+
 ## 설치
 
 ```sh
@@ -247,6 +251,10 @@ export default defineConfig({ rules: [testGuard()] })
 
 Probity에는 턴 종료 훅이 없으므로 commit-msg 훅과 GitHub Action을 함께 쓰세요. 자세한 내용은
 [docs/agents/probity.md](docs/agents/probity.md)에 있습니다.
+
+test-guard의 규칙은 일부러 고정되어 있어서 에이전트가 말로 설득해 넘어갈 수 없습니다. 틀린 테스트에
+맞춰 바꾼 로직처럼 고정 규칙으로 판단할 수 없는 부분은, Probity의 AI 판정 규칙이 에이전트의 기존
+로그인으로 변경을 명세와 대조해 볼 수 있습니다. test-guard는 막고, AI 규칙은 검토합니다.
 
 다른 에이전트는 commit-msg 훅과 GitHub Action을 사용하세요.
 
