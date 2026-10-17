@@ -1,33 +1,23 @@
+import type { Analysis } from '../languages/index.js';
 import { isAssertionLine } from '../languages/index.js';
-import type { Rule } from './types.js';
+import type { Rule, RuleInput } from './types.js';
 
 // Fewer assertions in the same file. Assertions inside a `try` whose handler
-// swallows failures, or in code that never runs, don't count. Removing one
-// of two identical assertions on neighbouring lines loses nothing.
-export const tg003: Rule = ({ before, after, hunks }) => {
+// swallows failures, or in code that never runs, don't count. Changes that
+// lose nothing aren't counted against the file: one of two identical
+// neighbouring assertions removed, several `contains` checks replaced by one
+// exact comparison that holds them all, and an `assert…` helper deleted
+// whose calls were the assertions.
+export const tg003: Rule = (input) => {
+  const { before, after } = input;
   if (!before || !after || after.stats.assertions >= before.stats.assertions) {
     return [];
   }
-  const language = before.stats.language;
-  const same = (a: string | undefined, b: string | undefined) =>
-    a !== undefined &&
-    b !== undefined &&
-    a.replace(/\s+/g, '') === b.replace(/\s+/g, '');
-  const kept = new Set(after.lines.map((l) => l.replace(/\s+/g, '')));
-  const duplicates = hunks
-    .flatMap((h) => h.deleted)
-    .filter((n) => {
-      const line = before.lines[n - 1];
-      if (!line || !isAssertionLine(language, line)) return false;
-      // Its twin right above or below is still in the file.
-      const twin = [n - 1, n + 1].some(
-        (m) => same(before.lines[m - 1], line) && !hunksDelete(hunks, m),
-      );
-      return twin && kept.has(line.replace(/\s+/g, ''));
-    }).length;
-  if (after.stats.assertions + duplicates >= before.stats.assertions) {
-    return [];
-  }
+  const credit =
+    duplicates(before, after, input) +
+    mergedContains(before, after, input) +
+    deletedHelpers(before, input);
+  if (after.stats.assertions + credit >= before.stats.assertions) return [];
   const swallowed = after.swallowed - before.swallowed;
   const unreachable = after.unreachable - before.unreachable;
   const notes = [
@@ -47,5 +37,97 @@ export const tg003: Rule = ({ before, after, hunks }) => {
   ];
 };
 
-const hunksDelete = (hunks: { deleted: number[] }[], line: number) =>
-  hunks.some((h) => h.deleted.includes(line));
+const squash = (s: string) => s.replace(/\s+/g, '');
+const deletedLines = (input: RuleInput) =>
+  new Set(input.hunks.flatMap((h) => h.deleted));
+const addedLines = (input: RuleInput) =>
+  new Set(input.hunks.flatMap((h) => h.added));
+
+// One of two identical assertions on neighbouring lines, whose twin stays.
+function duplicates(before: Analysis, after: Analysis, input: RuleInput) {
+  const language = before.stats.language;
+  const deleted = deletedLines(input);
+  const kept = new Set(after.lines.map(squash));
+  return [...deleted].filter((n) => {
+    const line = before.lines[n - 1];
+    if (!line || !isAssertionLine(language, line)) return false;
+    const twin = [n - 1, n + 1].some(
+      (m) =>
+        !deleted.has(m) && squash(before.lines[m - 1] ?? '') === squash(line),
+    );
+    return twin && kept.has(squash(line));
+  }).length;
+}
+
+const STRING = /^(['"`])[\s\S]*\1$/;
+// `assertThat(s).contains("x")`, `expect(s).toContain("x")`,
+// `assertTrue(s.contains("x"))`, `assert "x" in s`.
+const CONTAINS = [
+  /\bassertThat\(\s*([\w.]+)\s*\)\s*\.contains(?:String)?\(\s*("(?:[^"\\]|\\.)*")\s*\)/,
+  /\bexpect\(\s*([\w.]+)\s*\)\s*\.toContain\(\s*((["'`])(?:(?!\3)[^\\]|\\.)*\3)\s*\)/,
+  /\bassertTrue\(\s*([\w.]+)\.contains\(\s*("(?:[^"\\]|\\.)*")\s*\)\s*\)/,
+];
+const PY_IN = /\bassert\s+((["'])(?:(?!\2)[^\\]|\\.)*\2)\s+in\s+([\w.]+)\s*$/;
+
+// `contains` checks on a value, all removed, and one exact comparison of
+// that value added whose expected text holds every one of them: the same
+// checks, made stronger. Credits all but the one added.
+function mergedContains(before: Analysis, after: Analysis, input: RuleInput) {
+  const deleted = deletedLines(input);
+  const added = addedLines(input);
+  const gone: { subject: string; text: string }[] = [];
+  for (const n of deleted) {
+    const raw = input.beforeLines[n - 1] ?? '';
+    if (!isAssertionLine(before.stats.language, before.lines[n - 1] ?? '')) {
+      continue;
+    }
+    const m = CONTAINS.map((re) => re.exec(raw)).find(Boolean);
+    if (m?.[1] && m[2])
+      gone.push({ subject: squash(m[1]), text: m[2].slice(1, -1) });
+    const p = PY_IN.exec(raw);
+    if (p?.[1] && p[3])
+      gone.push({ subject: squash(p[3]), text: p[1].slice(1, -1) });
+  }
+  if (gone.length < 2) return 0;
+  let credit = 0;
+  for (const check of after.checks) {
+    const [subject, expected] = check.sides;
+    if (!check.equal || !STRING.test(expected)) continue;
+    const lines = Array.from(
+      { length: check.end - check.start + 1 },
+      (_, i) => check.start + i,
+    );
+    if (!lines.some((n) => added.has(n))) continue;
+    const held = gone.filter(
+      (g) =>
+        g.subject === subject && g.text !== '' && expected.includes(g.text),
+    );
+    for (const g of held) gone.splice(gone.indexOf(g), 1);
+    credit += Math.max(0, held.length - 1);
+  }
+  return credit;
+}
+
+// A Java `assert…` helper method deleted with its body: each call to it
+// counted as an assertion, so the `fail()` inside it is no extra loss.
+const HELPER =
+  /^(\s*)(?:(?:private|public|protected|static|final)\s+)*void\s+(assert\w+)\s*\(/;
+function deletedHelpers(before: Analysis, input: RuleInput) {
+  if (before.stats.language !== 'java') return 0;
+  const deleted = deletedLines(input);
+  const afterText = input.afterLines.join('\n');
+  let credit = 0;
+  input.beforeLines.forEach((line, i) => {
+    const m = HELPER.exec(line);
+    if (!m || !deleted.has(i + 1)) return;
+    if (new RegExp(`\\bvoid\\s+${m[2]}\\s*\\(`).test(afterText)) return;
+    const indent = m[1] ?? '';
+    for (let n = i + 2; n <= input.beforeLines.length; n++) {
+      const body = input.beforeLines[n - 1] ?? '';
+      if (!deleted.has(n)) return;
+      if (body.startsWith(`${indent}}`)) return;
+      if (isAssertionLine('java', before.lines[n - 1] ?? '')) credit++;
+    }
+  });
+  return credit;
+}

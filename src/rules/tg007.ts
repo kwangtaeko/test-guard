@@ -263,6 +263,20 @@ const SPECS: Record<Language, Spec> = {
   },
 };
 
+// `assertThat(s.substring(0, p.length())).isEqualTo(p)` and
+// `assertThat(s).startsWith(p)` check the same thing.
+function samePrefixCheck(strong: string, weak: string): boolean {
+  const s = strong.replace(/\s+/g, '');
+  const m =
+    /assertThat\(([\w.]+)\.substring\(0,([\w.]+)\.length\(\)\)\)\.isEqualTo\(\2\)/.exec(
+      s,
+    );
+  return (
+    m !== null &&
+    weak.replace(/\s+|;$/g, '') === `assertThat(${m[1]}).startsWith(${m[2]})`
+  );
+}
+
 // The line that opens the indented block holding line `at` (0-based), by
 // indentation, or -1.
 function enclosing(lines: string[], at: number): number {
@@ -422,6 +436,7 @@ export const tg007: Rule = ({
         if (weak === -1) continue;
         const [hit] = weakAdded.splice(weak, 1);
         if (!hit) continue;
+        if (samePrefixCheck(strong.text, hit.text)) continue;
         reported.add(hit.line);
         pairedPerGroup[strong.group]++;
         findings.push({

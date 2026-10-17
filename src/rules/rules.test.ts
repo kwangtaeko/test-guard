@@ -1266,6 +1266,38 @@ describe('M8: false positives found in real history', () => {
       ).toContain('TG004');
     });
 
+    // gson ed99017a.
+    it('accepts a message added to an old assume, and one on a new test', () => {
+      const java = (...body: string[]) => [
+        'class PathTest {',
+        '  @Test',
+        '  public void topLevel() {',
+        ...body,
+        '  }',
+        '}',
+      ];
+      const path = 'src/test/java/PathTest.java';
+      const old = '    assumeTrue(factory == STRING);';
+      const why = [
+        '    assumeTrue(',
+        '        "only JsonReader", factory == STRING);',
+      ];
+      const extra = [
+        '  }',
+        '  @Test',
+        '  public void unquotedNumber() {',
+        '    assumeTrue("only JsonReader", factory == STRING);',
+        '    assertThat(read()).isEqualTo(1);',
+      ];
+      expect(change(path, java(old), java(...why, ...extra))).toEqual([]);
+      // An assume put into the old test is still a skip.
+      expect(
+        change(path, java('    run();'), java(old, '    run();', ...extra)).map(
+          ([id]) => id,
+        ),
+      ).toContain('TG004');
+    });
+
     it('still reports a skip added inside an old test', () => {
       expect(
         ids(OLD, [
@@ -1286,6 +1318,103 @@ describe('M8: false positives found in real history', () => {
           '});',
         ]),
       ).toContain('TG004');
+    });
+  });
+
+  // gson 99cc4cb1 / 2bcaaed8: the same checks, written another way.
+  describe('equal or stronger rewrites (Java)', () => {
+    const path = 'src/test/java/ATest.java';
+    const java = (...body: string[]) => [
+      'import org.junit.jupiter.api.Test;',
+      'class ATest {',
+      '  @Test void a() {',
+      ...body,
+      '  }',
+      ...[],
+      '}',
+    ];
+
+    it('counts throw new AssertionError like fail()', () => {
+      expect(
+        change(
+          path,
+          java('    fail();'),
+          java('    throw new AssertionError("x");'),
+        ),
+      ).toEqual([]);
+    });
+
+    it('accepts several contains merged into one exact comparison', () => {
+      const from = java(
+        '    assertThat(json).contains("year");',
+        '    assertThat(json).contains("month");',
+        '    assertThat(json).contains("day");',
+      );
+      const to = java(
+        '    assertThat(json).isEqualTo("{\\"year\\":1,\\"month\\":2,\\"day\\":3}");',
+      );
+      expect(change(path, from, to)).toEqual([]);
+      // Not when the exact value leaves one out, or checks something else.
+      expect(
+        change(
+          path,
+          from,
+          java('    assertThat(json).isEqualTo("{\\"year\\":1}");'),
+        ),
+      ).toEqual([['TG003', 'assertions 3 → 1']]);
+      expect(
+        change(
+          path,
+          from,
+          java('    assertThat(other).isEqualTo("year month day");'),
+        ),
+      ).toEqual([['TG003', 'assertions 3 → 1']]);
+    });
+
+    it('accepts an assert helper deleted with its calls rewritten', () => {
+      const helper = [
+        '  }',
+        '  private static void assertHas(String s, String part) {',
+        '    if (!s.contains(part)) {',
+        '      fail(s);',
+        '    }',
+      ];
+      expect(
+        change(
+          path,
+          java('    assertHas(a, "x");', ...helper),
+          java('    assertThat(a).contains("x");'),
+        ),
+      ).toEqual([]);
+      // Hollowed out but kept: still a loss.
+      expect(
+        change(
+          path,
+          java('    assertHas(a, "x");', ...helper),
+          java(
+            '    assertHas(a, "x");',
+            '  }',
+            '  private static void assertHas(String s, String part) {',
+          ),
+        ).map(([id]) => id),
+      ).toEqual(['TG003']);
+    });
+
+    it('accepts substring(0, p.length()).isEqualTo(p) → startsWith(p)', () => {
+      expect(
+        change(
+          path,
+          java('    assertThat(s.substring(0, p.length())).isEqualTo(p);'),
+          java('    assertThat(s).startsWith(p);'),
+        ),
+      ).toEqual([]);
+      expect(
+        change(
+          path,
+          java('    assertThat(s.substring(0, 3)).isEqualTo(p);'),
+          java('    assertThat(s).startsWith(p);'),
+        ).map(([id]) => id),
+      ).toEqual(['TG007']);
     });
   });
 

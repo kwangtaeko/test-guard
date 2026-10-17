@@ -3,7 +3,7 @@ import type { Rule } from './types.js';
 // A test's declaration: `it('x', …)`, `test.skip(…)`, `describe(…)`,
 // `def test_x`, `@Test`, a JUnit `void testX()`.
 const DECLARATION =
-  /^\s*(?:(?:it|test|specify|describe|context|suite|xit|xdescribe|fit)(?:\.\w+)*\s*\(|(?:async\s+)?def\s+test|@(?:Test|ParameterizedTest|RepeatedTest)\b|(?:public\s+)?void\s+test\w*\s*\()/;
+  /^\s*(?:(?:it|test|specify|describe|context|suite|xit|xdescribe|fit)(?:\.\w+)*\s*\(|(?:async\s+)?def\s+test|@(?:Test|ParameterizedTest|RepeatedTest)\b|(?:(?:public|protected|private|static|final)\s+)*void\s+\w+\s*\()/;
 // A skip marker saved under a name: `slow = pytest.mark.skipif(…)`.
 const ALIAS =
   /^\s*(\w+)\s*=\s*(?:pytest\.mark\.(?:skip|skipif|xfail)|unittest\.skip\w*)\b/;
@@ -25,16 +25,34 @@ export const tg004: Rule = ({
   if (afterSkips <= beforeSkips) return [];
 
   const added = new Set(hunks.flatMap((hunk) => hunk.added));
-  let hits = after.skips.filter((skip) => added.has(skip.line));
+  // A skip rewritten with the same condition (`assumeTrue(c)` →
+  // `assumeTrue("why", c)`) isn't new.
+  const deleted = new Set(hunks.flatMap((hunk) => hunk.deleted));
+  // Each old skip stands for one rewrite, matched first to skips that
+  // aren't on new tests.
   const newTest = onNewTest(afterLines, beforeLines, added);
+  const old = [...deleted].map((n) => condition(statement(beforeLines, n)));
+  const rewritten = new Set<number>();
+  const fresh = after.skips.filter((skip) => added.has(skip.line));
+  for (const skip of [
+    ...fresh.filter((s) => !newTest(s.line)),
+    ...fresh.filter((s) => newTest(s.line)),
+  ]) {
+    const at = old.indexOf(condition(statement(afterLines, skip.line)));
+    if (at === -1) continue;
+    old.splice(at, 1);
+    rewritten.add(skip.line);
+  }
+  let hits = fresh.filter((skip) => !rewritten.has(skip.line));
   const exempt = hits.filter((skip) => newTest(skip.line));
   const grown = after.stats.tests - (before?.stats.tests ?? 0);
   if (before && exempt.length > 0 && grown >= exempt.length) {
     hits = hits.filter((skip) => !exempt.includes(skip));
-    if (hits.length === 0 && afterSkips - exempt.length <= beforeSkips) {
-      return [];
-    }
   }
+  // Every added skip a rewrite or on a new test, and the new tests account
+  // for all the skips gained.
+  const counted = before && grown >= exempt.length ? exempt.length : 0;
+  if (hits.length === 0 && afterSkips - beforeSkips <= counted) return [];
   if (hits.length === 0) {
     return [
       {
@@ -53,6 +71,34 @@ export const tg004: Rule = ({
     message: `added \`${skip.text}\``,
   }));
 };
+
+const STRINGS = /(['"`])(?:(?!\1)[^\\]|\\.)*\1/g;
+
+// The statement starting on a (1-based) line, up to its closing bracket.
+function statement(lines: string[], n: number): string {
+  let text = '';
+  let depth = 0;
+  for (let i = n; i <= lines.length && i < n + 8; i++) {
+    const line = (lines[i - 1] ?? '').replace(STRINGS, '""');
+    text += line;
+    for (const ch of line) {
+      if (ch === '(') depth++;
+      else if (ch === ')') depth--;
+    }
+    if (depth <= 0) break;
+  }
+  return text;
+}
+
+// What a skip checks, without its message: `assumeTrue("why", c)` and
+// `assumeTrue(c)` are the same skip.
+const condition = (text: string) =>
+  text
+    .replace(STRINGS, '')
+    .replace(/\s+/g, '')
+    .replace(/\(,+/g, '(')
+    .replace(/,+\)/g, ')')
+    .replace(/,{2,}/g, ',');
 
 // Whether the skip on a (1-based) line belongs to a test the change added:
 // its declaration is an added line, under a name the old file didn't have.
